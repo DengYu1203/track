@@ -1,0 +1,30 @@
+{
+    "configurations": [
+        {
+            "browse": {
+                "databaseFilename": "",
+                "limitSymbolsToIncludedHeaders": true
+            },
+            "includePath": [
+                "/home/user/deng/catkin_deng/devel/include/**",
+                "/opt/ros/kinetic/include/**",
+                "/home/user/deng/catkin_deng/src/image_transport/include/**",
+                "/home/user/deng/catkin_deng/src/imu_tools/imu_complementary_filter/include/**",
+                "/home/user/deng/catkin_deng/src/imu_tools/imu_filter_madgwick/include/**",
+                "/home/user/deng/catkin_deng/src/nuscenes/include/**",
+                "/home/user/deng/catkin_deng/src/nuscenes_add/include/**",
+                "/home/user/deng/catkin_deng/src/pcl/include/**",
+                "/home/user/deng/catkin_deng/src/radar_odometry/include/**",
+                "/home/user/deng/catkin_deng/src/track/include/**",
+                "/home/user/deng/catkin_deng/src/conti_radar/**",
+                "/usr/include/**"
+            ],
+            "name": "ROS",
+            "intelliSenseMode": "gcc-x64",
+            "compilerPath": "/usr/bin/gcc",
+            "cStandard": "c11",
+            "cppStandard": "c++17"
+        }
+    ],
+    "version": 4
+}
