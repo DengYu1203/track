@@ -73,11 +73,11 @@ void dbscan::expand_neighbor(std::vector<int> neighbor){
 }
 
 int dbscan::decide_vel_level(double vel){
-    if(vel <= 1.0)
+    if(vel <= 0.5)
         return 0;
-    else if(vel <= 3.0)
+    else if(vel <= 1.2)
         return 1;
-    else if(vel <= 3.0)
+    else if(vel <= 5.0)
         return 2;
     else
         return 3;
