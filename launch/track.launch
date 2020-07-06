@@ -1,0 +1,10 @@
+<launch>
+    <node pkg="radar_odometry"    type="radar_ego_motion" name="radar_ego_motion" output="screen"/>
+    <!-- default value -->
+    <!-- <param name="vel_threshold"    value="0.1"/> -->
+    
+    <param name="vel_threshold"    value="0.2"/>
+    
+    <node pkg="track"             type="radar_track"      name="radar_track"      output="screen"/>
+    <node pkg="rviz" type="rviz" name="rviz" args="-d $(find track)/rviz_config/nuscenes_track_rviz.rviz"/>
+</launch>
