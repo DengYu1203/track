@@ -85,14 +85,21 @@ typedef message_filters::sync_policies::ApproximateTime<conti_radar::Measurement
 typedef pcl::PointXYZ PointT;
 
 ros::Publisher pub_marker;  // pub tracking id
-ros::Publisher pub_filter;  // pub outlier points
+ros::Publisher pub_filter;  // pub filter points
 ros::Publisher pub_cluster; // pub cluster points
+ros::Publisher pub_cluster_pointcloud;  // pub cluster point cloud
+
 
 tf::Transform scan_transform ;
 tf::Transform transform_lidar,transform_radar_front;
 tf::StampedTransform echo_transform;
 bool lidar_tf_check = false;
 bool radar_front_tf_check = false;
+bool DA_choose = false;  // true: hungarian, false: my DA
+bool output_KFT_result = true;
+bool output_obj_id_result = true;
+bool output_radar_info = true;
+bool output_DA_pair = true;
 
 // typedef struct kf_tracker_point{
 //   float x;
@@ -125,16 +132,15 @@ int cens_index = 0;
 vector<kf_tracker_point> cluster_cens;
 visualization_msgs::MarkerArray m_s,l_s;
 int max_size = 0;
-// int radar_point_size =0;
-float dt = 0.08f;//0.1f 0.08f=1/13Hz(radar)
-float sigmaP = 0.01;//0.01
-float sigmaQ = 0.1;//0.1
-#define bias 4.0 // used for data association bias 5 6
+
+float dt = 0.08f;     //0.1f 0.08f=1/13Hz(radar)
+float sigmaP = 0.01;  //0.01
+float sigmaQ = 0.1;   //0.1
+#define bias 4.0      // used for data association bias 5 6
 #define mahalanobis_bias 1.0 // used for data association(mahalanobis dist)
 int id_count = 0; //the counter to calculate the current occupied track_id
 
 ////////////////////////kalman/////////////////////////
-// #define cluster_num 40 
 #define frame_lost 10   // 5 10
 
 std::vector <string> tracked;
@@ -144,21 +150,15 @@ int un_assigned;
 
 ros::Publisher objID_pub;
 // KF init
-int stateDim=6;// [x,y,v_x,v_y]//,w,h]
-int measDim=3;// [z_x,z_y//,z_w,z_h]
-int ctrlDim=0;// control input 0(acceleration=0,constant v model)
-// std::vector<pcl::PointCloud<PointT>::Ptr> cluster_vec;
+int stateDim = 6;// [x,y,v_x,v_y]//,w,h]
+int measDim = 3;// [z_x,z_y//,z_w,z_h]
+int ctrlDim = 0;// control input 0(acceleration=0,constant v model)
 
-std::vector<cv::KalmanFilter> KF;//(stateDim,measDim,ctrlDim,CV_32F);
 
-cv::Mat state(stateDim,1,CV_32F);
-cv::Mat_<float> measurement(3,1);//x.y.z pose as measurement
-
-                        // measurement.setTo(Scalar(0));
 bool firstFrame = true;
 bool get_transformer = false;
 
-// //////type filter
+// type filter
 typedef struct track{
   cv::KalmanFilter kf;
   geometry_msgs::Point pred_pose;
@@ -199,7 +199,7 @@ void marker_id(bool firstFrame,std::vector<int> obj_id,std::vector<int> marker_o
         geometry_msgs::Pose pose;
         pose.position.x = cens[k].x;
         pose.position.y = cens[k].y;
-        pose.position.z = cens[k].z+2.0f+k;
+        pose.position.z = cens[k].z+1.0f+k/20;
         
         //-----------first frame要先發佈tag 為initial 
         stringstream ss;
@@ -241,6 +241,28 @@ void marker_id(bool firstFrame,std::vector<int> obj_id,std::vector<int> marker_o
     }
     
     pub_marker.publish(m_s);
+}
+
+void color_cluster(std::vector< std::vector<kf_tracker_point> > cluster_list){
+  // republish radar points
+  pcl::PointCloud<pcl::PointXYZI>::Ptr cluster_points(new pcl::PointCloud<pcl::PointXYZI>);
+  sensor_msgs::PointCloud2::Ptr cluster_cloud(new sensor_msgs::PointCloud2);
+  cluster_points->clear();
+  // end republish
+  for(int i=0;i<cluster_list.size();i++){
+    for(int j=0;j<cluster_list.at(i).size();j++){
+      pcl::PointXYZI pt;
+      pt.x = cluster_list.at(i).at(j).x;
+      pt.y = cluster_list.at(i).at(j).y;
+      pt.z = cluster_list.at(i).at(j).z;
+      pt.intensity = i*200;
+      cluster_points->push_back(pt);
+    }
+  }
+  pcl::toROSMsg(*cluster_points,*cluster_cloud);
+  cluster_cloud->header.frame_id = "/nuscenes_radar_front";
+  cluster_cloud->header.stamp = radar_stamp;
+  pub_cluster_pointcloud.publish(cluster_cloud);
 }
 
 // calculate euclidean distance of two points
@@ -355,9 +377,6 @@ int new_track(kf_tracker_point cen, int idx){
     ka.statePost.at<float>(0)=cen.x;
     ka.statePost.at<float>(1)=cen.y;
     ka.statePost.at<float>(2)=cen.z;
-    // ka.statePost.at<float>(3)=0;// initial v_x
-    // ka.statePost.at<float>(4)=0;// initial v_y
-    // ka.statePost.at<float>(5)=0;// initial v_z
     ka.statePost.at<float>(3)=cen.x_v;// initial v_x
     ka.statePost.at<float>(4)=cen.y_v;// initial v_y
     ka.statePost.at<float>(5)=cen.z_v;// initial v_z
@@ -453,16 +472,6 @@ void KFT(void)
     std::vector<geometry_msgs::Point> KFpredictions;
     i=0;
     
-    // cout<<"--------------------\nThe prediction is:"<<endl;
-    // for (auto it=filters.begin();it!=filters.end();it++)
-    // {
-    //     geometry_msgs::Point pt;
-    //     pt.x = (*it).pred_pose.x;
-    //     pt.y = (*it).pred_pose.y;
-    //     pt.z = (*it).pred_pose.z;
-    //     // cout << "("<<pt.x<<","<<pt.y<<","<<pt.z<<")"<<endl;
-
-    // }
 
 
     //construct dist matrix (mxn): m tracks, n clusters.
@@ -507,24 +516,28 @@ void KFT(void)
 
     }
 
-    bool DA_choose = false;  // true: hungarian false: my DA
     vector<int> assignment;
     if(DA_choose){
-    //hungarian method to optimize(minimize) the dist matrix
-    HungarianAlgorithm HungAlgo;
-    // vector<int> assignment;
-    double cost = HungAlgo.Solve(distMat, assignment);
-    cout<<"HungAlgo assignment pair:\n";
-    for (unsigned int x = 0; x < distMat.size(); x++)
-		  std::cout << x << "," << assignment[x] << "\t";
-	  std::cout << "\ncost: " << cost << std::endl; // HungAlgo computed cost
+      //hungarian method to optimize(minimize) the dist matrix
+      HungarianAlgorithm HungAlgo;
+      double cost = HungAlgo.Solve(distMat, assignment);
+      
+      if(output_DA_pair){
+        cout<<"HungAlgo assignment pair:\n";
+        for (unsigned int x = 0; x < distMat.size(); x++)
+          std::cout << x << "," << assignment[x] << "\t";
+        std::cout << "\ncost: " << cost << std::endl; // HungAlgo computed cost
+      }
     }
     else{
-    // my DA method
-    assignment = find_min(distMat);
-    for (unsigned int x = 0; x < distMat.size(); x++)
-		  std::cout << x << "," << assignment[x] << "\t";
-    cout<<endl;
+      // my DA method
+      assignment = find_min(distMat);
+      if(output_DA_pair){
+        cout<<"My DA assignment pair:\n";
+        for (unsigned int x = 0; x < distMat.size(); x++)
+          std::cout << x << "," << assignment[x] << "\t";
+        cout<<endl;
+      }
     }
 
     std::vector<int> obj_id(cens.size(),-1);
@@ -533,7 +546,6 @@ void KFT(void)
     int k=0;
     for(k=0; k<filters.size(); k++){
       std::vector<double> dist_vec = distMat.at(k); //float
-      cout<<"------------------------------------------------\n";
       geometry_msgs::Point pred_v = filters.at(k).pred_v;
       geometry_msgs::Point pred_pos = filters.at(k).pred_pose;
       geometry_msgs::Point pred_v_us = filters.at(k).pred_v_us;
@@ -556,12 +568,17 @@ void KFT(void)
       }
       else
         dist_thres = dist_thres1;
-      // float dist_thres = sqrt(delta_x * delta_x + delta_y * delta_y);
-      cout << "The dist_thres for " <<filters.at(k).uuid<<" is "<<dist_thres<<endl;
-      cout<<"predict v:"<<pred_v.x<<","<<pred_v.y<<endl;
-      cout<<"predict pos:"<<pred_pos.x<<","<<pred_pos.y<<endl;
-      cout<<"predict v(us):"<<pred_v_us.x<<","<<pred_v_us.y<<endl;
-      cout<<"predict pos(us):"<<pred_pos_us.x<<","<<pred_pos_us.y<<endl;
+      
+      if(output_KFT_result){
+        cout<<"------------------------------------------------\n";
+        // float dist_thres = sqrt(delta_x * delta_x + delta_y * delta_y);
+        cout << "The dist_thres for " <<filters.at(k).uuid<<" is "<<dist_thres<<endl;
+        cout<<"predict v:"<<pred_v.x<<","<<pred_v.y<<endl;
+        cout<<"predict pos:"<<pred_pos.x<<","<<pred_pos.y<<endl;
+        cout<<"predict v(us):"<<pred_v_us.x<<","<<pred_v_us.y<<endl;
+        cout<<"predict pos(us):"<<pred_pos_us.x<<","<<pred_pos_us.y<<endl;
+      }
+      
       //-1 for non matched tracks
       if ( assignment[k] != -1 ){
         // if( dist_vec.at(assignment[k]) <=  dist_thres + mahalanobis_bias ){//bias as gating function to filter the impossible matched detection 
@@ -596,25 +613,27 @@ void KFT(void)
       }
       
   
-      //get tracked or lost
-      if (filters.at(k).state== "tracking"){
-          cout<<"The state of "<<k<<" filters is \033[1;32m"<<filters.at(k).state<<"\033[0m,to cluster_idx "<< filters.at(k).cluster_idx <<" track: "<<filters.at(k).track_frame;
-          cout<<" ("<<cens.at(assignment[k]).x<<","<<cens.at(assignment[k]).y<<")"<<endl;
+      if(output_KFT_result){
+        //get tracked or lost
+        if (filters.at(k).state== "tracking"){
+            cout<<"The state of "<<k<<" filters is \033[1;32m"<<filters.at(k).state<<"\033[0m,to cluster_idx "<< filters.at(k).cluster_idx <<" track: "<<filters.at(k).track_frame;
+            cout<<" ("<<cens.at(assignment[k]).x<<","<<cens.at(assignment[k]).y<<")"<<endl;
+        }
+        else if (filters.at(k).state== "lost")
+            cout<<"The state of "<<k<<" filters is \033[1;34m"<<filters.at(k).state<<"\033[0m,to cluster_idx "<< filters.at(k).cluster_idx <<" lost: "<<filters.at(k).lose_frame<<endl;
+        else
+            cout<<"\033[1;31mUndefined state for trackd "<<k<<"\033[0m"<<endl;
       }
-      else if (filters.at(k).state== "lost")
-          cout<<"The state of "<<k<<" filters is \033[1;34m"<<filters.at(k).state<<"\033[0m,to cluster_idx "<< filters.at(k).cluster_idx <<" lost: "<<filters.at(k).lose_frame<<endl;
-      else
-          cout<<"\033[1;31mUndefined state for trackd "<<k<<"\033[0m"<<endl;
-      
     
     }
 
-  
-    cout<<"\033[1;33mThe obj_id:\033[0m\n";
-    for (i=0; i<cens.size(); i++){
-      cout<<obj_id.at(i)<<" ";
-      }
-    cout<<endl;
+    if(output_obj_id_result){
+      cout<<"\033[1;33mThe obj_id:\033[0m\n";
+      for (i=0; i<cens.size(); i++){
+        cout<<obj_id.at(i)<<" ";
+        }
+      cout<<endl;
+    }
     vector<int> marker_obj_id = obj_id;
     //initiate new tracks for not-matched(obj_id = -1) cluster
     for (i=0; i<cens.size(); i++){
@@ -624,11 +643,13 @@ void KFT(void)
       }
     }
 
-    cout<<"\033[1;33mThe obj_id after new track:\033[0m\n";
-    for (i=0; i<cens.size(); i++){
-      cout<<obj_id.at(i)<<" ";
-      }
-    cout<<endl;
+    if(output_obj_id_result){
+      cout<<"\033[1;33mThe obj_id after new track:\033[0m\n";
+      for (i=0; i<cens.size(); i++){
+        cout<<obj_id.at(i)<<" ";
+        }
+      cout<<endl;
+    }
     //deal with lost tracks and let it remain const velocity -> update pred_pose to meas correct
     for(std::vector<track>::iterator pit = filters.begin (); pit != filters.end ();){
         if( !(*pit).state.compare("lost")  )//true for 0
@@ -650,10 +671,8 @@ void KFT(void)
 
 
     //begin mark
-    // cout << m_s.markers.size() <<endl;
     m_s.markers.resize(cens.size());
     m_s.markers.clear();
-    // cout<< m_s.markers.size()<< endl;
 
     // marker_id(false,marker_obj_id);   // publish the "tracking" id
     marker_id(false,obj_id,marker_obj_id,tracking_frame_obj_id);       // publish all id
@@ -719,9 +738,9 @@ void KFT(void)
 
 int call_back_num = 0;
 
-# define cluster_distance 2.5 // euclidean distance 0.8,1.5,2.5,3 for car length
-# define cluster_vel_angle 2  // velocity angle threshold 2
-# define cluster_vel 1        // velocity threshold 1
+#define cluster_distance 2.5 // euclidean distance 0.8,1.5,2.5,3 for car length
+#define cluster_vel_angle 2  // velocity angle threshold 2
+#define cluster_vel 1        // velocity threshold 1
 bool filter_cluster_flag=true;       // decide cluster the radar points or not
 void cluster(void){
   int cluster_num = 0;
@@ -796,12 +815,7 @@ void cluster(void){
       }
 
     }
-    // c.x = c.x / index;
-    // c.y = c.y / index;
-    // c.z = c.z / index;
-    // c.x_v = c.x_v / index;
-    // c.y_v = c.y_v / index;
-    // c.z_v = c.z_v / index;
+
     c.x /= index;
     c.y /= index;
     c.z /= index;
@@ -849,7 +863,6 @@ void callback(const conti_radar::MeasurementConstPtr& msg,const nav_msgs::Odomet
     cout<<"\033[1;33mVehicle velocity:\n\033[0m";
     cout<<"Time stamp:"<<odom->header.stamp.toSec()<<endl;
     cout<<"vx: "<<vx<<" ,vy: "<<vy<<endl<<endl;
-    // cout<<"Vehicle velocity:("<<vx<<","<<vy<<")"<<endl;
 
     for (int i = 0;i<msg->points.size();i++){
 
@@ -858,9 +871,11 @@ void callback(const conti_radar::MeasurementConstPtr& msg,const nav_msgs::Odomet
         float range = sqrt(pow(msg->points[i].longitude_dist,2) + 
                            pow(msg->points[i].lateral_dist,2));
         double angle = atan2(msg->points[i].lateral_vel_comp+vy,msg->points[i].longitude_vel_comp+vx)*180/M_PI;
-        cout<<"----------------------------------------------\n";
-        cout<<i<<"\tvel:"<<velocity<<"("<<msg->points[i].longitude_vel_comp<<","<<msg->points[i].lateral_vel_comp<<")\n\tdegree:"<<angle;
-        cout<<"\n\tinvalid_state:"<<msg->points[i].invalid_state;
+        if(output_radar_info){
+          cout<<"----------------------------------------------\n";
+          cout<<i<<"\tvel:"<<velocity<<"("<<msg->points[i].longitude_vel_comp<<","<<msg->points[i].lateral_vel_comp<<")\n\tdegree:"<<angle;
+          cout<<"\n\tinvalid_state:"<<msg->points[i].invalid_state;
+        }
         if((range>100||(msg->points[i].invalid_state==7))){               //set radar threshold (distance and invalid state)
         // if(range>100){               //set radar threshold (distance)
             radar_point_size--;
@@ -887,8 +902,8 @@ void callback(const conti_radar::MeasurementConstPtr& msg,const nav_msgs::Odomet
             pt.z = c.z;
             pt.intensity = msg->points[i].rcs;
             filter_points->push_back(pt);
-            
-            cout<<"\n\tposition:("<<c.x<<","<<c.y<<","<<c.z<<")\n";
+            if(output_radar_info)
+              cout<<"\n\tposition:("<<c.x<<","<<c.y<<","<<c.z<<")\n";
             cens.push_back(c);
         }
         
@@ -903,7 +918,9 @@ void callback(const conti_radar::MeasurementConstPtr& msg,const nav_msgs::Odomet
     if (filter_cluster_flag){
       cluster();
       dbscan dbscan(cens);
-      dbscan.cluster();
+      std::vector< std::vector<kf_tracker_point> > dbscan_cluster;
+      dbscan_cluster = dbscan.cluster();
+      color_cluster(dbscan_cluster);
       cout<<"\nAfter cluster:\n";
       cens.clear();
       cens = cluster_cens;
@@ -913,57 +930,55 @@ void callback(const conti_radar::MeasurementConstPtr& msg,const nav_msgs::Odomet
 
 
     if( firstFrame ){
+      int current_id = cens.size();
+      float sigmaP=0.01;//0.01
+      float sigmaQ=0.1;//0.1
 
-    // int current_id = radar_point_size;
-    int current_id = cens.size();
-    float sigmaP=0.01;//0.01
-    float sigmaQ=0.1;//0.1
+      //initialize new tracks(function)
+      //state = [x,y,z,vx,vy,vz]
+      for(int i=0; i<current_id;i++){
+          //try ka.init 
+          track tk;
+          cv::KalmanFilter ka;
+          ka.init(stateDim,measDim,ctrlDim,CV_32F);
+          ka.transitionMatrix = (Mat_<float>(6, 6) << 1,0,0,dt,0,0,
+                                                      0,1,0,0,dt,0,
+                                                      0,0,1,0,0,dt,
+                                                      0,0,0,1,0,0,
+                                                      0,0,0,0,1,0,
+                                                      0,0,0,0,0,1);
+          cv::setIdentity(ka.measurementMatrix);
+          cv::setIdentity(ka.processNoiseCov, Scalar::all(sigmaP));
+          cv::setIdentity(ka.measurementNoiseCov, cv::Scalar(sigmaQ));
+          cout<<"( "<<cens.at(i).x<<","<<cens.at(i).y<<","<<cens.at(i).z<<")\n";
+          ka.statePost.at<float>(0)=cens.at(i).x;
+          ka.statePost.at<float>(1)=cens.at(i).y;
+          ka.statePost.at<float>(2)=cens.at(i).z;
+          ka.statePost.at<float>(3)=cens.at(i).x_v;// initial v_x
+          ka.statePost.at<float>(4)=cens.at(i).y_v;// initial v_y
+          ka.statePost.at<float>(5)=cens.at(i).z_v;// initial v_z
 
-    //initialize new tracks(function)
-    //state = [x,y,z,vx,vy,vz]
-    for(int i=0; i<current_id;i++){
-        //try ka.init 
-        track tk;
-        cv::KalmanFilter ka;
-        ka.init(stateDim,measDim,ctrlDim,CV_32F);
-        ka.transitionMatrix = (Mat_<float>(6, 6) << 1,0,0,dt,0,0,
-                                                    0,1,0,0,dt,0,
-                                                    0,0,1,0,0,dt,
-                                                    0,0,0,1,0,0,
-                                                    0,0,0,0,1,0,
-                                                    0,0,0,0,0,1);
-        cv::setIdentity(ka.measurementMatrix);
-        cv::setIdentity(ka.processNoiseCov, Scalar::all(sigmaP));
-        cv::setIdentity(ka.measurementNoiseCov, cv::Scalar(sigmaQ));
-        cout<<"( "<<cens.at(i).x<<","<<cens.at(i).y<<","<<cens.at(i).z<<")\n";
-        ka.statePost.at<float>(0)=cens.at(i).x;
-        ka.statePost.at<float>(1)=cens.at(i).y;
-        ka.statePost.at<float>(2)=cens.at(i).z;
-        ka.statePost.at<float>(3)=cens.at(i).x_v;// initial v_x
-        ka.statePost.at<float>(4)=cens.at(i).y_v;// initial v_y
-        ka.statePost.at<float>(5)=cens.at(i).z_v;// initial v_z
+          tk.kf = ka;
+          tk.kf_us = ka;  // ready to update the state
+          tk.state = "tracking";
+          tk.lose_frame = 0;
+          tk.track_frame = 1;
 
-        tk.kf = ka;
-        tk.kf_us = ka;  // ready to update the state
-        tk.state = "tracking";
-        tk.lose_frame = 0;
-        tk.track_frame = 1;
+          tk.uuid = i;
+          id_count = i;
+          filters.push_back(tk);
+      }
 
-        tk.uuid = i;
-        id_count = i;
-        filters.push_back(tk);
-    }
+      cout<<"Initiate "<<filters.size()<<" tracks."<<endl;
 
-    cout<<"Initiate "<<filters.size()<<" tracks."<<endl;
-
-    cout << m_s.markers.size() <<endl;
-    m_s.markers.clear();
-    cout<< "\033[1;33mMarkerarray is empty(1):\033[0m"<<m_s.markers.empty()<< endl;
-    std::vector<int> no_use_id;
-    marker_id(firstFrame,no_use_id,no_use_id,no_use_id);
-            
-    firstFrame=false;
-    return;//////////////////////////first initialization down 
+      cout << m_s.markers.size() <<endl;
+      m_s.markers.clear();
+      cout<< "\033[1;33mMarkerarray is empty(1):\033[0m"<<m_s.markers.empty()<< endl;
+      std::vector<int> no_use_id;
+      marker_id(firstFrame,no_use_id,no_use_id,no_use_id);
+              
+      firstFrame=false;
+      return; // first initialization down 
     }
     KFT();
     return;
@@ -1042,8 +1057,25 @@ int main(int argc, char** argv){
   no_cloud_sync_->registerCallback(boost::bind(&callback, _1, _2));
   
   pub_marker = nh.advertise<visualization_msgs::MarkerArray>("marker", 1);
-  pub_filter = nh.advertise<sensor_msgs::PointCloud2>("filter_radar_front",1000);
-  pub_cluster = nh.advertise<sensor_msgs::PointCloud2>("cluster_radar_front",1000);
+  pub_filter = nh.advertise<sensor_msgs::PointCloud2>("filter_radar_front",500);
+  pub_cluster = nh.advertise<sensor_msgs::PointCloud2>("cluster_radar_front",500);
+  pub_cluster_pointcloud = nh.advertise<sensor_msgs::PointCloud2>("cluster_radar_front_pointcloud",500);
+
+  nh.param<bool>("output_KFT_result"    ,output_KFT_result    ,true);
+  nh.param<bool>("output_obj_id_result" ,output_obj_id_result ,true);
+  nh.param<bool>("output_radar_info"    ,output_radar_info    ,true);
+  nh.param<bool>("output_DA_pair"       ,output_DA_pair       ,true);
+  nh.param<bool>("DA_method"            ,DA_choose            ,false);
+
+  
+
+  ROS_INFO("Parameter:");
+  ROS_INFO("Data association method : %s" , DA_choose ? "hungarian" : "my DA method(Gerrdy-like)");
+  ROS_INFO("output radar info : %s"       , output_radar_info ? "True" : "False");
+  ROS_INFO("Output KFT result : %s"       , output_KFT_result ? "True" : "False");
+  ROS_INFO("output obj id result : %s"    , output_obj_id_result ? "True" : "False");
+  ROS_INFO("output DA pair : %s"          , output_DA_pair ? "True" : "False");
+  
 
   // ros::Rate r(10);
   while(ros::ok()){

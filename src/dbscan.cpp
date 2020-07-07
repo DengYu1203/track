@@ -11,13 +11,13 @@ dbscan::dbscan(std::vector<cluster_point> &data)
     points = data;
     center.clear();
     // initial dbscan parameter (from slow to fast)
-    param.eps[0] = 2;
-    param.MinPts[0] = 5;
-    param.eps[1] = 1.5;
+    param.eps[0] = 3.0;
+    param.MinPts[0] = 4;
+    param.eps[1] = 2.5;
     param.MinPts[1] = 3;
-    param.eps[2] = 1;
+    param.eps[2] = 1.5;
     param.MinPts[2] = 2;
-    param.eps[3] = 0.5;
+    param.eps[3] = 1;
     param.MinPts[3] = 1;
     // initial all cluster index to -1
     cluster_idx.assign(points.size(),-1);
@@ -26,9 +26,9 @@ dbscan::dbscan(std::vector<cluster_point> &data)
 
 dbscan::~dbscan(){}
 
-std::vector<cluster_point> dbscan::cluster(void){
+std::vector< std::vector<cluster_point> > dbscan::cluster(void){
     for(int i=0;i<points.size();i++){
-        if(points.at(i).vistited)
+        if(points.at(i).vistited && cluster_idx.at(i)!=-1)
             continue;
         points.at(i).vistited = true;
         cluster_point core_pt = points.at(i);
@@ -40,7 +40,34 @@ std::vector<cluster_point> dbscan::cluster(void){
             cluster_count ++;
         }
     }
-    
+    std::vector< std::vector<cluster_point> > cluster_list(cluster_count);
+    cout<<"DBSCAN cluster index:\n";
+    cout<<"==============================\n";
+    for(int j=0;j<cluster_idx.size();j++){
+        // if(j != 0)
+        //     cout<<"----------------------\n";
+        if(cluster_idx.at(j)!=-1)
+            cluster_list.at(cluster_idx.at(j)).push_back(points.at(j));
+        // cout<<j<<":\ncluster index: "<<cluster_idx.at(j)<<endl;
+        // cout<<"Position:("<<points.at(j).x<<","<<points.at(j).y<<")"<<endl;
+        // cout<<"Velocity: "<<points.at(j).vel<<" ("<<points.at(j).x_v<<","<<points.at(j).y_v<<")"<<endl;
+    }
+    for(int k=0;k<cluster_list.size();k++){
+        if(k != 0)
+            cout<<"----------------------\n";
+        cout<<"cluster index: "<<k<<endl<<endl;
+        for(int idx=0;idx<cluster_list.at(k).size();idx++){
+            cout<<"\tPosition:("<<cluster_list.at(k).at(idx).x<<","<<cluster_list.at(k).at(idx).y<<")"<<endl;
+            cout<<"\tVelocity: "<<cluster_list.at(k).at(idx).vel<<" ("<<cluster_list.at(k).at(idx).x_v<<","<<cluster_list.at(k).at(idx).y_v<<")\n"<<endl;
+        }
+    }
+    cout<<"==============================\n";
+    return cluster_list;
+
+}
+
+int dbscan::cluster_num(void){
+    return cluster_count;
 }
 
 std::vector<int> dbscan::find_neighbor(cluster_point pt, int vel_level){
@@ -66,18 +93,18 @@ void dbscan::expand_neighbor(std::vector<int> neighbor){
         int n_pt_level = decide_vel_level(n_pt.vel);
         std::vector<int> expand_n = find_neighbor(n_pt,n_pt_level);
         if(expand_n.size() >= param.MinPts[n_pt_level]){
-            cluster_idx.at(i) = cluster_count;
+            cluster_idx.at(neighbor.at(i)) = cluster_count;
             expand_neighbor(expand_n);
         }
     }
 }
 
 int dbscan::decide_vel_level(double vel){
-    if(vel <= 0.5)
+    if(vel <= 0.05)
         return 0;
-    else if(vel <= 1.2)
+    else if(vel <= 0.1)
         return 1;
-    else if(vel <= 5.0)
+    else if(vel <= 0.2)
         return 2;
     else
         return 3;

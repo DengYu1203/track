@@ -40,7 +40,8 @@ private:
 public:
     dbscan(std::vector<cluster_point> &data);
     ~dbscan();
-    std::vector<cluster_point> cluster(void);
+    std::vector< std::vector<cluster_point> > cluster(void);
+    int cluster_num(void);
 };
 
 #endif
