@@ -12,9 +12,9 @@ dbscan::dbscan(std::vector<cluster_point> &data)
     center.clear();
     // initial dbscan parameter (from slow to fast)
     param.eps[0] = 3.0;
-    param.MinPts[0] = 4;
+    param.MinPts[0] = 2;
     param.eps[1] = 2.5;
-    param.MinPts[1] = 3;
+    param.MinPts[1] = 2;
     param.eps[2] = 1.5;
     param.MinPts[2] = 2;
     param.eps[3] = 1;
@@ -32,6 +32,9 @@ std::vector< std::vector<cluster_point> > dbscan::cluster(void){
             continue;
         points.at(i).vistited = true;
         cluster_point core_pt = points.at(i);
+        // filter out the high speed points
+        if(core_pt.vel>0.4)
+            continue;
         int core_level = decide_vel_level(core_pt.vel);
         std::vector<int> neighbor = find_neighbor(core_pt, core_level);
         if(neighbor.size() >= param.MinPts[core_level]){
@@ -108,4 +111,12 @@ int dbscan::decide_vel_level(double vel){
         return 2;
     else
         return 3;
+    // if(vel <= 0.01)
+    //     return 0;
+    // else if(vel <= 0.05)
+    //     return 1;
+    // else if(vel <= 0.1)
+    //     return 2;
+    // else
+    //     return 3;
 }
