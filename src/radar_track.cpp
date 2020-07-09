@@ -84,6 +84,7 @@ typedef message_filters::sync_policies::ApproximateTime<conti_radar::Measurement
 
 typedef pcl::PointXYZ PointT;
 
+ros::Publisher pub_cluster_marker;  // pub cluster index
 ros::Publisher pub_marker;  // pub tracking id
 ros::Publisher pub_filter;  // pub filter points
 ros::Publisher pub_cluster; // pub cluster points
@@ -130,8 +131,8 @@ typedef struct label_point
 vector<kf_tracker_point> cens;
 int cens_index = 0;
 vector<kf_tracker_point> cluster_cens;
-visualization_msgs::MarkerArray m_s,l_s;
-int max_size = 0;
+visualization_msgs::MarkerArray m_s,l_s,cluster_s;
+int max_size = 0, cluster_marker_max_size = 0;
 
 float dt = 0.08f;     //0.1f 0.08f=1/13Hz(radar)
 float sigmaP = 0.01;  //0.01
@@ -249,13 +250,40 @@ void color_cluster(std::vector< std::vector<kf_tracker_point> > cluster_list){
   sensor_msgs::PointCloud2::Ptr cluster_cloud(new sensor_msgs::PointCloud2);
   cluster_points->clear();
   // end republish
+  visualization_msgs::Marker marker;
+  cluster_s.markers.clear();
+
   for(int i=0;i<cluster_list.size();i++){
+    srand(i+1);
+    float color = 255 * rand() / (RAND_MAX + 1.0);
+    // add cluster index marker
+    marker.header.frame_id="/nuscenes_radar_front";
+    marker.header.stamp = ros::Time();
+    marker.action = visualization_msgs::Marker::ADD;
+    marker.pose.orientation.w = 1.0;
+    marker.id = i;
+    marker.type = visualization_msgs::Marker::TEXT_VIEW_FACING;
+    marker.scale.z = 3.0f;  // rgb(255,127,122)
+    marker.color.r = color * 3.34448160535f;
+    marker.color.g = color * 1.70357751278f;
+    marker.color.b = color * 8.77192982456f;
+    marker.color.a = 1;
+    stringstream ss;
+    ss << i;
+    marker.text = ss.str();
+    geometry_msgs::Pose pose;
+    pose.position.x = cluster_list.at(i).at(0).x;
+    pose.position.y = cluster_list.at(i).at(0).y;
+    pose.position.z = cluster_list.at(i).at(0).z+1.0f;
+    marker.pose = pose;
+    cluster_s.markers.push_back(marker);
+
     for(int j=0;j<cluster_list.at(i).size();j++){
       pcl::PointXYZI pt;
       pt.x = cluster_list.at(i).at(j).x;
       pt.y = cluster_list.at(i).at(j).y;
       pt.z = cluster_list.at(i).at(j).z;
-      pt.intensity = i*200;
+      pt.intensity = color;
       cluster_points->push_back(pt);
     }
   }
@@ -263,6 +291,21 @@ void color_cluster(std::vector< std::vector<kf_tracker_point> > cluster_list){
   cluster_cloud->header.frame_id = "/nuscenes_radar_front";
   cluster_cloud->header.stamp = radar_stamp;
   pub_cluster_pointcloud.publish(cluster_cloud);
+  if (cluster_s.markers.size() > cluster_marker_max_size)
+       cluster_marker_max_size = cluster_s.markers.size();
+
+  for (int a = cluster_list.size(); a < cluster_marker_max_size; a++)
+  {
+      marker.id = a;
+      marker.color.a = 0;
+      marker.pose.position.x = 0;
+      marker.pose.position.y = 0;
+      marker.pose.position.z = 0;
+      marker.scale.z = 0;
+      cluster_s.markers.push_back(marker);
+  }
+  
+  pub_cluster_marker.publish(cluster_s);
 }
 
 // calculate euclidean distance of two points
@@ -1056,6 +1099,7 @@ int main(int argc, char** argv){
   no_cloud_sync_ = new message_filters::Synchronizer<NoCloudSyncPolicy>(NoCloudSyncPolicy(3), sub, sub_vel);
   no_cloud_sync_->registerCallback(boost::bind(&callback, _1, _2));
   
+  pub_cluster_marker = nh.advertise<visualization_msgs::MarkerArray>("cluster_index", 1);
   pub_marker = nh.advertise<visualization_msgs::MarkerArray>("marker", 1);
   pub_filter = nh.advertise<sensor_msgs::PointCloud2>("filter_radar_front",500);
   pub_cluster = nh.advertise<sensor_msgs::PointCloud2>("cluster_radar_front",500);
