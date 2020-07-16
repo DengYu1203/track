@@ -1,5 +1,4 @@
 <launch>
-    <!-- <node pkg="radar_odometry"    type="radar_ego_motion" name="radar_ego_motion" output="screen"/> -->
     <node pkg="radar_odometry"    type="radar_ego_motion" name="radar_ego_motion"/>
     <!-- default value -->
     <!-- <param name="vel_threshold"    value="0.1"/> -->
@@ -10,6 +9,8 @@
     <param name="output_KFT_result"     value="false"/>
     <param name="output_obj_id_result"  value="false"/>
     <param name="output_radar_info"     value="true"/>
+    <param name="output_cluster_info"   value="false"/>
+    <param name="output_dbscan_info"    value="true"/>
     <param name="output_DA_pair"        value="false"/>
     <param name="DA_method"             value="false"/>
 
