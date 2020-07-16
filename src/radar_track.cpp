@@ -100,6 +100,8 @@ bool DA_choose = false;  // true: hungarian, false: my DA
 bool output_KFT_result = true;
 bool output_obj_id_result = true;
 bool output_radar_info = true;
+bool output_cluster_info = true;
+bool output_dbscan_info = true;
 bool output_DA_pair = true;
 
 // typedef struct kf_tracker_point{
@@ -710,7 +712,7 @@ void KFT(void)
             pit ++;
             
     }
-    cout<<"We now have "<<filters.size()<<" tracks."<<endl;
+    cout<<"\033[1;33mTracker number: "<<filters.size()<<" tracks.\033[0m\n"<<endl;
 
 
     //begin mark
@@ -831,7 +833,8 @@ void cluster(void){
   sensor_msgs::PointCloud2::Ptr cluster_cloud(new sensor_msgs::PointCloud2);
   cluster_points->clear();
   // end republish
-  cout<<"\nIn cluter:\n";
+  if(output_cluster_info)
+    cout<<"\nIn cluter:\n";
   for(int i=0;i<cluster_num;i++){
     kf_tracker_point c;
     c.x = 0;
@@ -841,8 +844,10 @@ void cluster(void){
     c.y_v = 0;
     c.z_v = 0;
     int index=0;
-    cout<<"==============================\n";
-    cout<<"cluster "<<i<<":\n";
+    if(output_cluster_info){
+      cout<<"==============================\n";
+      cout<<"cluster "<<i<<":\n";
+    }
     for(int j=0;j<cens.size();j++){
       if(cens.at(j).cluster_flag==i){
         index++;
@@ -852,9 +857,11 @@ void cluster(void){
         c.x_v += cens.at(j).x_v;
         c.y_v += cens.at(j).y_v;
         c.z_v += cens.at(j).z_v;
-        cout<<"position sum:"<<"("<<c.x<<","<<c.y<<")"<<endl;
-        cout<<"vel sum:"<<"("<<c.x_v<<","<<c.y_v<<")"<<endl;
-        cout<<"index="<<index<<endl;
+        if(output_cluster_info){
+          cout<<"position sum:"<<"("<<c.x<<","<<c.y<<")"<<endl;
+          cout<<"vel sum:"<<"("<<c.x_v<<","<<c.y_v<<")"<<endl;
+          cout<<"index="<<index<<endl;
+        }
       }
 
     }
@@ -906,7 +913,8 @@ void callback(const conti_radar::MeasurementConstPtr& msg,const nav_msgs::Odomet
     cout<<"\033[1;33mVehicle velocity:\n\033[0m";
     cout<<"Time stamp:"<<odom->header.stamp.toSec()<<endl;
     cout<<"vx: "<<vx<<" ,vy: "<<vy<<endl<<endl;
-
+    if(output_radar_info)
+      cout<<"Radar information\n";
     for (int i = 0;i<msg->points.size();i++){
 
         float velocity = sqrt(pow(msg->points[i].lateral_vel_comp,2) + 
@@ -918,6 +926,7 @@ void callback(const conti_radar::MeasurementConstPtr& msg,const nav_msgs::Odomet
           cout<<"----------------------------------------------\n";
           cout<<i<<"\tvel:"<<velocity<<"("<<msg->points[i].longitude_vel_comp<<","<<msg->points[i].lateral_vel_comp<<")\n\tdegree:"<<angle;
           cout<<"\n\tinvalid_state:"<<msg->points[i].invalid_state;
+          cout<<"\n\tRCS value:"<<msg->points[i].rcs;
         }
         if((range>100||(msg->points[i].invalid_state==7))){               //set radar threshold (distance and invalid state)
         // if(range>100){               //set radar threshold (distance)
@@ -961,9 +970,12 @@ void callback(const conti_radar::MeasurementConstPtr& msg,const nav_msgs::Odomet
     if (filter_cluster_flag){
       cluster();
       dbscan dbscan(cens);
-      std::vector< std::vector<kf_tracker_point> > dbscan_cluster;
+      std::vector< std::vector<kf_tracker_point> > dbscan_cluster, stage_one_cluster;
+      dbscan.output_info = output_dbscan_info;
       dbscan_cluster = dbscan.cluster();
+      stage_one_cluster = dbscan.stage_one_result();
       color_cluster(dbscan_cluster);
+      // color_cluster(stage_one_cluster);
       cout<<"\nAfter cluster:\n";
       cens.clear();
       cens = cluster_cens;
@@ -1108,6 +1120,8 @@ int main(int argc, char** argv){
   nh.param<bool>("output_KFT_result"    ,output_KFT_result    ,true);
   nh.param<bool>("output_obj_id_result" ,output_obj_id_result ,true);
   nh.param<bool>("output_radar_info"    ,output_radar_info    ,true);
+  nh.param<bool>("output_cluster_info"  ,output_cluster_info  ,true);
+  nh.param<bool>("output_dbscan_info"   ,output_dbscan_info  ,true);
   nh.param<bool>("output_DA_pair"       ,output_DA_pair       ,true);
   nh.param<bool>("DA_method"            ,DA_choose            ,false);
 
@@ -1116,6 +1130,8 @@ int main(int argc, char** argv){
   ROS_INFO("Parameter:");
   ROS_INFO("Data association method : %s" , DA_choose ? "hungarian" : "my DA method(Gerrdy-like)");
   ROS_INFO("output radar info : %s"       , output_radar_info ? "True" : "False");
+  ROS_INFO("output cluster info : %s"     , output_cluster_info ? "True" : "False");
+  ROS_INFO("output dbscan info : %s"      , output_dbscan_info ? "True" : "False");
   ROS_INFO("Output KFT result : %s"       , output_KFT_result ? "True" : "False");
   ROS_INFO("output obj id result : %s"    , output_obj_id_result ? "True" : "False");
   ROS_INFO("output DA pair : %s"          , output_DA_pair ? "True" : "False");
