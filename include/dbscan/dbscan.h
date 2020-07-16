@@ -27,21 +27,25 @@ typedef struct multi_param{
 
 class dbscan
 {
-private:
-    std::vector<cluster_point> points;
-    std::vector<cluster_point> center;
-    std::vector<int> cluster_idx;
-    dbscan_param param;
-    int cluster_count;
-    std::vector<int> find_neighbor(cluster_point pt, int vel_level);
-    void expand_neighbor(std::vector<int> neighbor);
-    int decide_vel_level(double vel);
-    
-public:
-    dbscan(std::vector<cluster_point> &data);
-    ~dbscan();
-    std::vector< std::vector<cluster_point> > cluster(void);
-    int cluster_num(void);
+    private:
+        std::vector<cluster_point> points;
+        std::vector<cluster_point> center;
+        std::vector< std::vector<cluster_point> > stage_one_cluster;
+        std::vector<int> cluster_idx;
+        dbscan_param param;
+        int cluster_count;
+        std::vector<int> find_neighbor(cluster_point pt, int vel_level);
+        void expand_neighbor(std::vector<int> neighbor);
+        int decide_vel_level(double vel);
+        std::vector< std::vector<cluster_point> > stage_one_filter(std::vector< std::vector<cluster_point> > &cluster_list);
+        
+    public:
+        dbscan(std::vector<cluster_point> &data);
+        ~dbscan();
+        std::vector< std::vector<cluster_point> > cluster(void);
+        std::vector< std::vector<cluster_point> > stage_one_result(void);
+        int cluster_num(void);
+        bool output_info;       // decide to print the dbscan output information or not
 };
 
 #endif

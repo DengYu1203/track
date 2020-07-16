@@ -5,11 +5,15 @@
 #include <Eigen/Dense>
 
 #include <dbscan/dbscan.h>
+
+#define stage_one_num 5
+
 dbscan::dbscan(std::vector<cluster_point> &data)
 {
     // initial input output data
     points = data;
     center.clear();
+    stage_one_cluster.clear();
     // initial dbscan parameter (from slow to fast)
     param.eps[0] = 3.0;
     param.MinPts[0] = 2;
@@ -22,10 +26,12 @@ dbscan::dbscan(std::vector<cluster_point> &data)
     // initial all cluster index to -1
     cluster_idx.assign(points.size(),-1);
     cluster_count = 0;
+    output_info = true;
 }
 
 dbscan::~dbscan(){}
 
+// begin to cluster the data
 std::vector< std::vector<cluster_point> > dbscan::cluster(void){
     for(int i=0;i<points.size();i++){
         if(points.at(i).vistited && cluster_idx.at(i)!=-1)
@@ -44,31 +50,37 @@ std::vector< std::vector<cluster_point> > dbscan::cluster(void){
         }
     }
     std::vector< std::vector<cluster_point> > cluster_list(cluster_count);
-    cout<<"DBSCAN cluster index:\n";
-    cout<<"==============================\n";
     for(int j=0;j<cluster_idx.size();j++){
-        // if(j != 0)
-        //     cout<<"----------------------\n";
         if(cluster_idx.at(j)!=-1)
             cluster_list.at(cluster_idx.at(j)).push_back(points.at(j));
-        // cout<<j<<":\ncluster index: "<<cluster_idx.at(j)<<endl;
-        // cout<<"Position:("<<points.at(j).x<<","<<points.at(j).y<<")"<<endl;
-        // cout<<"Velocity: "<<points.at(j).vel<<" ("<<points.at(j).x_v<<","<<points.at(j).y_v<<")"<<endl;
     }
-    for(int k=0;k<cluster_list.size();k++){
-        if(k != 0)
-            cout<<"----------------------\n";
-        cout<<"cluster index: "<<k<<endl<<endl;
-        for(int idx=0;idx<cluster_list.at(k).size();idx++){
-            cout<<"\tPosition:("<<cluster_list.at(k).at(idx).x<<","<<cluster_list.at(k).at(idx).y<<")"<<endl;
-            cout<<"\tVelocity: "<<cluster_list.at(k).at(idx).vel<<" ("<<cluster_list.at(k).at(idx).x_v<<","<<cluster_list.at(k).at(idx).y_v<<")\n"<<endl;
+    if(output_info){
+        cout<<"DBSCAN cluster index:\n";
+        cout<<"==============================\n";
+        for(int k=0;k<cluster_list.size();k++){
+            if(k != 0)
+                cout<<"----------------------\n";
+            cout<<"cluster index: "<<k<<endl<<endl;
+            for(int idx=0;idx<cluster_list.at(k).size();idx++){
+                cout<<"\tPosition:("<<cluster_list.at(k).at(idx).x<<","<<cluster_list.at(k).at(idx).y<<")"<<endl;
+                cout<<"\tVelocity: "<<cluster_list.at(k).at(idx).vel<<" ("<<cluster_list.at(k).at(idx).x_v<<","<<cluster_list.at(k).at(idx).y_v<<")\n"<<endl;
+            }
         }
+        cout<<"==============================\n";
     }
-    cout<<"==============================\n";
+    stage_one_cluster = stage_one_filter(cluster_list);
     return cluster_list;
 
 }
 
+
+// return stage one cluster
+std::vector< std::vector<cluster_point> > dbscan::stage_one_result(void){
+    return stage_one_cluster;
+}
+
+
+// return the cluster number after cluster function
 int dbscan::cluster_num(void){
     return cluster_count;
 }
@@ -119,4 +131,20 @@ int dbscan::decide_vel_level(double vel){
     //     return 2;
     // else
     //     return 3;
+}
+
+std::vector< std::vector<cluster_point> > dbscan::stage_one_filter(std::vector< std::vector<cluster_point> > &cluster_list){
+    std::vector< std::vector<cluster_point> > copy_list = cluster_list;
+    std::vector< std::vector<cluster_point> > stage_one_list;
+    std::vector< int > remove_list;
+    for(int idx=0;idx<copy_list.size();idx++){
+        if(copy_list.at(idx).size() > stage_one_num){
+            stage_one_list.push_back(copy_list.at(idx));
+            remove_list.push_back(idx);
+        }
+    }
+    for(int i=remove_list.size()-1;i>=0;i--){
+        cluster_list.erase(cluster_list.begin()+remove_list.at(i));
+    }
+    return stage_one_list;
 }
