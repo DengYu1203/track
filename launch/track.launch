@@ -4,15 +4,21 @@
     <!-- <param name="vel_threshold"    value="0.1"/> -->
     
     <param name="vel_threshold"         value="0.2"/>
+    <param name="use_vel"               value="true"/>
     
     <node pkg="track"             type="radar_track"      name="radar_track"      output="screen"/>
     <param name="output_KFT_result"     value="false"/>
     <param name="output_obj_id_result"  value="false"/>
-    <param name="output_radar_info"     value="true"/>
-    <param name="output_cluster_info"   value="false"/>
+    <param name="output_radar_info"     value="false"/>
+    <param name="output_cluster_info"   value="true"/>
     <param name="output_dbscan_info"    value="true"/>
     <param name="output_DA_pair"        value="false"/>
+    <param name="output_exe_time"       value="true"/>
     <param name="DA_method"             value="false"/>
+    <param name="use_KFT_module"        value="false"/>
+    <param name="kft_id_num"            value="1"/>
+    <param name="show_vel_marker"       value="false"/>
+    <param name="use_ego_callback"      value="true"/>
 
     <node pkg="rviz" type="rviz" name="rviz" args="-d $(find track)/rviz_config/nuscenes_track_rviz.rviz"/>
 </launch>
