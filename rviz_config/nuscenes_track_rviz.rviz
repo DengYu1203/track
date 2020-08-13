@@ -18,13 +18,12 @@ Panels:
     Experimental: false
     Name: Time
     SyncMode: 0
-    SyncSource: Image_front
+    SyncSource: Image_front_left
   - Class: rviz/Displays
     Help Height: 0
     Name: Displays
     Property Tree Widget:
-      Expanded:
-        - /Grid1
+      Expanded: ~
       Splitter Ratio: 0.5
     Tree Height: 296
 Toolbars:
@@ -91,34 +90,8 @@ Visualization Manager:
       Show Axes: true
       Show Names: true
       Tree:
-        map:
-          car:
-            lidar_label:
-              {}
-            nuscenes_cam_back:
-              {}
-            nuscenes_cam_back_left:
-              {}
-            nuscenes_cam_back_right:
-              {}
-            nuscenes_cam_front:
-              {}
-            nuscenes_cam_front_left:
-              {}
-            nuscenes_cam_front_right:
-              {}
-            nuscenes_lidar:
-              {}
-            nuscenes_radar_back_left:
-              {}
-            nuscenes_radar_back_right:
-              {}
-            nuscenes_radar_front:
-              {}
-            nuscenes_radar_front_left:
-              {}
-            nuscenes_radar_front_right:
-              {}
+        car:
+          {}
       Update Interval: 0
       Value: true
     - Class: rviz/Axes
@@ -133,14 +106,20 @@ Visualization Manager:
       Marker Topic: /lidar_label
       Name: annotation
       Namespaces:
-        human.pedestrian.adult: true
-        vehicle.car: true
-        vehicle.truck: true
+        {}
       Queue Size: 100
       Value: true
     - Class: rviz/MarkerArray
       Enabled: true
-      Marker Topic: /marker
+      Marker Topic: /map_annotation
+      Name: map annotation
+      Namespaces:
+        {}
+      Queue Size: 100
+      Value: true
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: /tracking_id
       Name: track marker
       Namespaces:
         {}
@@ -162,6 +141,30 @@ Visualization Manager:
         {}
       Queue Size: 100
       Value: false
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: /cluster_index
+      Name: cluster index
+      Namespaces:
+        {}
+      Queue Size: 100
+      Value: true
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: /tracking_trajectory_path
+      Name: trajectory path
+      Namespaces:
+        {}
+      Queue Size: 100
+      Value: true
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: /tracking_pt
+      Name: tracking pt
+      Namespaces:
+        {}
+      Queue Size: 100
+      Value: true
     - Class: rviz/Image
       Enabled: true
       Image Topic: /image_front
@@ -252,7 +255,7 @@ Visualization Manager:
       Max Intensity: 255
       Min Color: 0; 0; 0
       Min Intensity: 0
-      Name: nuscenes_lidar
+      Name: lidar
       Position Transformer: XYZ
       Queue Size: 10
       Selectable: true
@@ -432,7 +435,7 @@ Visualization Manager:
       Max Intensity: 46.5
       Min Color: 0; 0; 0
       Min Intensity: -4.5
-      Name: filter_radar_front
+      Name: filter radar pt
       Position Transformer: XYZ
       Queue Size: 10
       Selectable: true
@@ -453,27 +456,87 @@ Visualization Manager:
       Axis: Z
       Channel Name: intensity
       Class: rviz/PointCloud2
+      Color: 136; 255; 0
+      Color Transformer: FlatColor
+      Decay Time: 0
+      Enabled: true
+      Invert Rainbow: false
+      Max Color: 255; 255; 255
+      Max Intensity: 27
+      Min Color: 0; 0; 0
+      Min Intensity: -4
+      Name: inlier
+      Position Transformer: XYZ
+      Queue Size: 10
+      Selectable: true
+      Size (Pixels): 3
+      Size (m): 0.5
+      Style: Spheres
+      Topic: /inlier_radar
+      Unreliable: false
+      Use Fixed Frame: true
+      Use rainbow: true
+      Value: true
+    - Alpha: 1
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 10
+        Min Value: -10
+        Value: true
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz/PointCloud2
+      Color: 248; 37; 255
+      Color Transformer: FlatColor
+      Decay Time: 0
+      Enabled: true
+      Invert Rainbow: false
+      Max Color: 255; 255; 255
+      Max Intensity: 16.5
+      Min Color: 0; 0; 0
+      Min Intensity: -4
+      Name: outlier
+      Position Transformer: XYZ
+      Queue Size: 10
+      Selectable: true
+      Size (Pixels): 3
+      Size (m): 0.699999988
+      Style: Spheres
+      Topic: /outlier_radar
+      Unreliable: false
+      Use Fixed Frame: true
+      Use rainbow: true
+      Value: true
+    - Alpha: 1
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 10
+        Min Value: -10
+        Value: true
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz/PointCloud2
       Color: 255; 170; 0
       Color Transformer: FlatColor
       Decay Time: 0
-      Enabled: false
+      Enabled: true
       Invert Rainbow: false
       Max Color: 170; 0; 0
       Max Intensity: 4096
       Min Color: 0; 0; 0
       Min Intensity: 0
-      Name: cluster_radar_front
+      Name: cluster center
       Position Transformer: XYZ
       Queue Size: 10
       Selectable: true
       Size (Pixels): 3
       Size (m): 0.699999988
       Style: Boxes
-      Topic: /cluster_radar_front
+      Topic: /cluster_center
       Unreliable: false
       Use Fixed Frame: true
       Use rainbow: true
-      Value: false
+      Value: true
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
@@ -504,19 +567,11 @@ Visualization Manager:
       Use Fixed Frame: true
       Use rainbow: true
       Value: true
-    - Class: rviz/MarkerArray
-      Enabled: true
-      Marker Topic: /cluster_index
-      Name: cluster_index
-      Namespaces:
-        {}
-      Queue Size: 100
-      Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
     Default Light: true
-    Fixed Frame: nuscenes_radar_front
+    Fixed Frame: car
     Frame Rate: 30
   Name: root
   Tools:
@@ -537,16 +592,16 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/ThirdPersonFollower
-      Distance: 117.139122
+      Distance: 78.0407562
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.0599999987
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: 21.211668
-        Y: 67.6132507
-        Z: -1.84025466
+        X: 17.0033417
+        Y: 45.5855865
+        Z: -1.84022176
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.0500000007
       Invert Z Axis: false
@@ -555,7 +610,7 @@ Visualization Manager:
       Pitch: 1.56979632
       Target Frame: nuscenes_lidar
       Value: ThirdPersonFollower (rviz)
-      Yaw: 6.26503754
+      Yaw: 6.27550364
     Saved:
       - Class: rviz/ThirdPersonFollower
         Distance: 224.902557
