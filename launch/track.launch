@@ -11,14 +11,18 @@
     <param name="output_obj_id_result"  value="false"/>
     <param name="output_radar_info"     value="false"/>
     <param name="output_cluster_info"   value="true"/>
-    <param name="output_dbscan_info"    value="true"/>
+    <param name="output_dbscan_info"    value="false"/>
     <param name="output_DA_pair"        value="false"/>
     <param name="output_exe_time"       value="true"/>
+    <param name="output_label_info"     value="false"/>
     <param name="DA_method"             value="false"/>
     <param name="use_KFT_module"        value="false"/>
     <param name="kft_id_num"            value="1"/>
     <param name="show_vel_marker"       value="false"/>
     <param name="use_ego_callback"      value="true"/>
+    <param name="get_transformer"       value="true"/>
+    
+    <param name="use_score_cluster"     value="true"/>
 
     <node pkg="rviz" type="rviz" name="rviz" args="-d $(find track)/rviz_config/nuscenes_track_rviz.rviz"/>
 </launch>
