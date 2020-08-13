@@ -13,8 +13,10 @@ typedef struct tracker_point{
   float x_v;
   float y_v;
   float z_v;
+  float rcs;
   double vel_ang;
   double vel;
+  int id;
   int cluster_flag;
   bool vistited;
 }cluster_point,kf_tracker_point;
@@ -39,10 +41,10 @@ class dbscan
         dbscan_param param;
         int cluster_count;
         int state;
+        bool use_RANSAC;
         std::vector<int> find_neighbor(cluster_point pt, int vel_level);
         void expand_neighbor(std::vector<int> neighbor);
         int decide_vel_level(double vel);
-        int decide_vel_level_RANSAC(double vel);
         std::vector<cluster_point> delist(std::vector< std::vector<cluster_point> > cluster_l);
         std::vector< std::vector<cluster_point> > stage_one_filter(std::vector< std::vector<cluster_point> > &cluster_list);
         void cluster_center(std::vector< std::vector<cluster_point> > cluster_list);
@@ -53,6 +55,7 @@ class dbscan
         ~dbscan();
         std::vector< std::vector<cluster_point> > cluster(void);
         std::vector< std::vector<cluster_point> > cluster_from_RANSAC(std::vector<cluster_point> inlier,std::vector<cluster_point> outlier);
+        std::vector< std::vector<cluster_point> > cluster_from_RANSAC_out2in(std::vector<cluster_point> inlier,std::vector<cluster_point> outlier);
         std::vector< std::vector<cluster_point> > stage_one_result(void);
         std::vector<cluster_point> get_center(void);
         int cluster_num(void);

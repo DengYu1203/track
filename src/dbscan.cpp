@@ -33,6 +33,7 @@ dbscan::dbscan(std::vector<cluster_point> &data)
     cluster_count = 0;
     state = 1;
     output_info = true;
+    use_RANSAC = false;
 }
 
 dbscan::~dbscan(){}
@@ -117,30 +118,42 @@ std::vector< std::vector<cluster_point> > dbscan::cluster(void){
             cluster_list.insert(cluster_list.end(),stage_one_cluster.begin(),stage_one_cluster.end());
             cluster_center(cluster_list);
             merge(cluster_list);
-            if(output_info){
-                cout<<"------------------------------------------\n";
-                cout<<"\nVar info:\n";
-                cout<<" x     y     z     vx    vy    vz"<<endl;
-                for(int i=0;i<var_list.size();i++){
-                    cout << var_list.at(i).transpose() << endl;
-                }
-                cout<<"------------------------------------------\n";
-            }
+            // if(output_info){
+            //     cout<<"------------------------------------------\n";
+            //     cout<<"\nVar info:\n";
+            //     cout<<" x     y     z     vx    vy    vz"<<endl;
+            //     for(int i=0;i<var_list.size();i++){
+            //         cout << var_list.at(i).transpose() << endl;
+            //     }
+            //     cout<<"------------------------------------------\n";
+            // }
             break;
     }
     
     return cluster_list;
 }
 
+// cluster the in/outlier data (inlier -> outlier)
 std::vector< std::vector<cluster_point> > dbscan::cluster_from_RANSAC(std::vector<cluster_point> inlier,std::vector<cluster_point> outlier){
+    use_RANSAC = true;
+    param.eps[0] = 3.0;
+    param.MinPts[0] = 2;
+    param.eps[1] = 2.5;
+    param.MinPts[1] = 2;
+    param.eps[2] = 2.0;
+    param.MinPts[2] = 2;
+    param.eps[3] = 1.5;
+    param.MinPts[3] = 1;
     in_points = inlier;
     out_points = outlier;
     cluster_idx.assign(in_points.size()+out_points.size(),-1);
     points.clear();
     points = in_points;
     cluster_idx.assign(points.size(),-1);
-    cout << endl << "RANSAC + DBSCAN cluster" << endl;
-    cout << "Inlier points:" << in_points.size() << " , Outlier points:" << out_points.size() << endl;
+    if(output_info){
+        cout << endl << "RANSAC + DBSCAN cluster" << endl;
+        cout << "Inlier points:" << in_points.size() << " , Outlier points:" << out_points.size() << endl;
+    }
     // inlier cluster part
     for(int i=0;i<in_points.size();i++){
         if(in_points.at(i).vistited && cluster_idx.at(i)!=-1)
@@ -192,14 +205,22 @@ std::vector< std::vector<cluster_point> > dbscan::cluster_from_RANSAC(std::vecto
     cluster_idx.clear();
     cluster_idx.assign(non_cluster_list.size(),-1);
     cluster_count = 0;
-    param.eps[0] = 2.5;
+    param.eps[0] = 2.8;
     param.MinPts[0] = 2;
-    param.eps[1] = 2.0;
+    param.eps[1] = 2.3;
     param.MinPts[1] = 2;
     param.eps[2] = 1.5;
     param.MinPts[2] = 2;
-    param.eps[3] = 1.0;
+    param.eps[3] = 1.5;
     param.MinPts[3] = 1;
+    // param.eps[0] = 2.2;
+    // param.MinPts[0] = 2;
+    // param.eps[1] = 1.8;
+    // param.MinPts[1] = 2;
+    // param.eps[2] = 1.5;
+    // param.MinPts[2] = 2;
+    // param.eps[3] = 1.2;
+    // param.MinPts[3] = 1;
 
     points.clear();
     points = non_cluster_list;
@@ -251,26 +272,144 @@ std::vector< std::vector<cluster_point> > dbscan::cluster_from_RANSAC(std::vecto
             if(k != 0)
                 cout<<"----------------------\n";
             cout<<"cluster index: "<<k<<endl;
-            cout<<"\033[1;43mcenter position: (" << center.at(k).x << "," << center.at(k).y << ")\033[0m";
+            cout<<"\033[1;33mcenter position: (" << center.at(k).x << "," << center.at(k).y << ")\033[0m";
             cout<<endl;
-            cout<<"\033[1;43mcenter velocity: (" << center.at(k).x_v << "," << center.at(k).y_v << ")\033[0m";
+            cout<<"\033[1;33mcenter velocity: (" << center.at(k).x_v << "," << center.at(k).y_v << ")\033[0m";
             cout<<endl<<endl;
             for(int idx=0;idx<cluster_list.at(k).size();idx++){
                 cout<<"\tPosition: ("<<cluster_list.at(k).at(idx).x<<","<<cluster_list.at(k).at(idx).y<<")"<<endl;
-                cout<<"\tVelocity: "<<cluster_list.at(k).at(idx).vel<<" ("<<cluster_list.at(k).at(idx).x_v<<","<<cluster_list.at(k).at(idx).y_v<<")\n"<<endl;
+                cout<<"\tVelocity: "<<cluster_list.at(k).at(idx).vel<<" ("<<cluster_list.at(k).at(idx).x_v<<","<<cluster_list.at(k).at(idx).y_v<<")"<<endl;
+                cout<<endl;
                 cluster_num ++;
             }
         }
-        cout<<"==============================\n";
-        cout<<"------------------------------------------\n";
-        cout<<"\nVar info:\n";
-        cout<<" x     y     z     vx    vy    vz"<<endl;
-        for(int i=0;i<var_list.size();i++){
-            cout << var_list.at(i).transpose() << endl;
-        }
-        cout<<"------------------------------------------\n";
+        // cout<<"==============================\n";
+        // cout<<"------------------------------------------\n";
+        // cout<<"\nVar info:\n";
+        // cout<<" x     y     z     vx    vy    vz"<<endl;
+        // for(int i=0;i<var_list.size();i++){
+        //     cout << var_list.at(i).transpose() << endl;
+        // }
+        // cout<<"------------------------------------------\n";
     }
+    return cluster_list;
+}
+
+// cluster the in/outlier data (outlier -> inlier)
+std::vector< std::vector<cluster_point> > dbscan::cluster_from_RANSAC_out2in(std::vector<cluster_point> inlier,std::vector<cluster_point> outlier){
+    use_RANSAC = true;
     
+    // outlier param
+    state = 2;
+    param.eps[0] = 2.8;
+    param.MinPts[0] = 2;
+    param.eps[1] = 2.3;
+    param.MinPts[1] = 2;
+    param.eps[2] = 1.5;
+    param.MinPts[2] = 2;
+    param.eps[3] = 1.5;
+    param.MinPts[3] = 1;
+    in_points = inlier;
+    out_points = outlier;
+    // cluster_idx.assign(in_points.size()+out_points.size(),-1);
+    points.clear();
+    points = out_points;
+    cluster_idx.assign(points.size(),-1);
+    if(output_info){
+        cout << endl << "RANSAC + DBSCAN cluster" << endl;
+        cout << "Inlier points:" << in_points.size() << " , Outlier points:" << out_points.size() << endl;
+    }
+    // outlier cluster part
+    for(int i=0;i<points.size();i++){
+        if(points.at(i).vistited && cluster_idx.at(i)!=-1)
+            continue;
+        points.at(i).vistited = true;
+        cluster_point core_pt = points.at(i);
+        int core_level = decide_vel_level(core_pt.vel);
+        std::vector<int> neighbor = find_neighbor(core_pt, core_level);
+        if(neighbor.size() >= param.MinPts[core_level]){
+            cluster_idx.at(i) = cluster_count;
+            expand_neighbor(neighbor);
+            cluster_count ++;
+        }
+    }
+    std::vector< std::vector<cluster_point> > cluster_list(cluster_count);
+    std::vector<cluster_point> non_cluster_list;
+    for(int j=0;j<cluster_idx.size();j++){
+        if(cluster_idx.at(j)!=-1)
+            cluster_list.at(cluster_idx.at(j)).push_back(points.at(j));
+        else{
+            points.at(j).cluster_flag = -1;
+            points.at(j).vistited = false;
+            non_cluster_list.push_back(points.at(j));
+        }
+    }
+   
+    stage_one_cluster = cluster_list;
+    
+    non_cluster_list.insert(non_cluster_list.end(),in_points.begin(),in_points.end());
+    state = 1;
+    cluster_idx.clear();
+    cluster_idx.assign(non_cluster_list.size(),-1);
+    cluster_count = 0;
+
+    // inlier param
+    param.eps[0] = 3.0;
+    param.MinPts[0] = 2;
+    param.eps[1] = 2.5;
+    param.MinPts[1] = 2;
+    param.eps[2] = 2.0;
+    param.MinPts[2] = 2;
+    param.eps[3] = 1.5;
+    param.MinPts[3] = 1;
+
+    points.clear();
+    points = non_cluster_list;
+    // inlier cluster part
+    for(int i=0;i<points.size();i++){
+        if(points.at(i).vistited && cluster_idx.at(i)!=-1)
+            continue;
+        points.at(i).vistited = true;
+        cluster_point core_pt = points.at(i);
+        int core_level = decide_vel_level(core_pt.vel);
+        std::vector<int> neighbor = find_neighbor(core_pt, core_level);
+        if(neighbor.size() >= param.MinPts[core_level]){
+            cluster_idx.at(i) = cluster_count;
+            expand_neighbor(neighbor);
+            cluster_count ++;
+        }
+    }
+    std::vector< std::vector<cluster_point> > cluster_list2(cluster_count);
+    for(int j=0;j<cluster_idx.size();j++){
+        if(cluster_idx.at(j)!=-1)
+            cluster_list2.at(cluster_idx.at(j)).push_back(points.at(j));
+    }
+    cluster_list.clear();
+    cluster_list = stage_one_cluster;
+    cluster_list.insert(cluster_list.end(),cluster_list2.begin(),cluster_list2.end());
+    cluster_center(cluster_list);
+    merge(cluster_list);
+    if(output_info){
+        cout<<"\nRANSAC+DBSCAN (out2in) cluster index (total):\n";
+        cout<<"Before merge -> Inlier:"<<cluster_list2.size()<<" , Outlier:"<<stage_one_cluster.size()<<endl;
+        cout<<"==============================\n";
+        int cluster_num = 0;
+        for(int k=0;k<cluster_list.size();k++){
+            if(k != 0)
+                cout<<"----------------------\n";
+            cout<<"cluster index: "<<k<<endl;
+            cout<<"\033[1;33mcenter position: (" << center.at(k).x << "," << center.at(k).y << ")\033[0m";
+            cout<<endl;
+            cout<<"\033[1;33mcenter velocity: (" << center.at(k).x_v << "," << center.at(k).y_v << ")\033[0m";
+            cout<<endl<<endl;
+            for(int idx=0;idx<cluster_list.at(k).size();idx++){
+                cout<<"\tPosition: ("<<cluster_list.at(k).at(idx).x<<","<<cluster_list.at(k).at(idx).y<<")"<<endl;
+                cout<<"\tVelocity: "<<cluster_list.at(k).at(idx).vel<<" ("<<cluster_list.at(k).at(idx).x_v<<","<<cluster_list.at(k).at(idx).y_v<<")"<<endl;
+                cout<<endl;
+                cluster_num ++;
+            }
+        }
+    }
     
     return cluster_list;
 }
@@ -316,56 +455,58 @@ void dbscan::expand_neighbor(std::vector<int> neighbor){
 }
 
 int dbscan::decide_vel_level(double vel){
-    switch (state){
-        case 1:
-            if(vel <= 0.05)
-                return 0;
-            else if(vel <= 0.1)
-                return 1;
-            else if(vel <= 0.25)
-                return 2;
-            else
-                return 3;
-            break;
-        case 2:
-            if(vel <= 0.1)
-                return 0;
-            else if(vel <= 0.2)
-                return 1;
-            else if(vel <= 0.3)
-                return 2;
-            else
-                return 3;
-        
-        default:
-            break;
+    if(!use_RANSAC){
+        switch (state){
+            case 1:
+                if(vel <= 0.05)
+                    return 0;
+                else if(vel <= 0.1)
+                    return 1;
+                else if(vel <= 0.25)
+                    return 2;
+                else
+                    return 3;
+                break;
+            case 2:
+                if(vel <= 0.1)
+                    return 0;
+                else if(vel <= 0.2)
+                    return 1;
+                else if(vel <= 0.3)
+                    return 2;
+                else
+                    return 3;
+            
+            default:
+                break;
+        }
     }
-}
-
-int dbscan::decide_vel_level_RANSAC(double vel){
-    switch (state){
-        case 1:
-            if(vel <= 0.05)
-                return 0;
-            else if(vel <= 0.1)
-                return 1;
-            else if(vel <= 0.25)
-                return 2;
-            else
-                return 3;
-            break;
-        case 2:
-            if(vel <= 0.1)
-                return 0;
-            else if(vel <= 0.2)
-                return 1;
-            else if(vel <= 0.3)
-                return 2;
-            else
-                return 3;
-        
-        default:
-            break;
+    // use RANSAC to get the in/outlier pts
+    else{
+        switch (state){
+            case 1:
+                if(vel <= 0.05)
+                    return 0;
+                else if(vel <= 0.1)
+                    return 1;
+                else if(vel <= 0.25)
+                    return 2;
+                else
+                    return 3;
+                break;
+            case 2:
+                if(vel <= 3.0)
+                    return 0;
+                else if(vel <= 4.5)
+                    return 1;
+                else if(vel <= 5.5)
+                    return 2;
+                else
+                    return 3;
+            
+            default:
+                break;
+        }
     }
 }
 
@@ -434,6 +575,8 @@ void dbscan::cluster_center(std::vector< std::vector<cluster_point> > cluster_li
         pt.x_v /= cluster_list.at(cluster_idx).size();
         pt.y_v /= cluster_list.at(cluster_idx).size();
         pt.z_v /= cluster_list.at(cluster_idx).size();
+        pt.cluster_flag = cluster_idx;
+        pt.vel = sqrt(pt.x_v*pt.x_v+pt.y_v*pt.y_v+pt.z_v*pt.z_v);
         center.push_back(pt);
 
     }
@@ -481,7 +624,7 @@ void dbscan::merge(std::vector< std::vector<cluster_point> > &cluster_list){
         for(int i=idx+1;i<center.size();i++){
             Eigen::Vector3f temp_pos(center.at(i).x, center.at(i).y, center.at(i).z);
             Eigen::Vector3f temp_vel(center.at(i).x_v, center.at(i).y_v, center.at(i).z_v);
-            if((core_pos-temp_pos).norm() < 3 && (core_vel-temp_vel).norm() < 0.2){
+            if((core_pos-temp_pos).norm() < 3 && (core_vel-temp_vel).norm() < 0.3){
                 merge_list_info.at(i) = idx;
                 break;
             }
