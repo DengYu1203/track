@@ -18,7 +18,7 @@ Panels:
     Experimental: false
     Name: Time
     SyncMode: 0
-    SyncSource: Image_front_left
+    SyncSource: ""
   - Class: rviz/Displays
     Help Height: 0
     Name: Displays
@@ -54,44 +54,13 @@ Visualization Manager:
       Frame Timeout: 300
       Frames:
         All Enabled: true
-        car:
-          Value: true
-        lidar_label:
-          Value: true
-        map:
-          Value: true
-        nuscenes_cam_back:
-          Value: true
-        nuscenes_cam_back_left:
-          Value: true
-        nuscenes_cam_back_right:
-          Value: true
-        nuscenes_cam_front:
-          Value: true
-        nuscenes_cam_front_left:
-          Value: true
-        nuscenes_cam_front_right:
-          Value: true
-        nuscenes_lidar:
-          Value: true
-        nuscenes_radar_back_left:
-          Value: true
-        nuscenes_radar_back_right:
-          Value: true
-        nuscenes_radar_front:
-          Value: true
-        nuscenes_radar_front_left:
-          Value: true
-        nuscenes_radar_front_right:
-          Value: true
       Marker Scale: 1
       Name: TF
       Show Arrows: true
       Show Axes: true
       Show Names: true
       Tree:
-        car:
-          {}
+        {}
       Update Interval: 0
       Value: true
     - Class: rviz/Axes
@@ -102,13 +71,13 @@ Visualization Manager:
       Reference Frame: nuscenes_radar_front
       Value: true
     - Class: rviz/MarkerArray
-      Enabled: true
+      Enabled: false
       Marker Topic: /lidar_label
       Name: annotation
       Namespaces:
         {}
       Queue Size: 100
-      Value: true
+      Value: false
     - Class: rviz/MarkerArray
       Enabled: true
       Marker Topic: /map_annotation
@@ -563,6 +532,36 @@ Visualization Manager:
       Size (m): 1
       Style: Spheres
       Topic: /cluster_radar_front_pointcloud
+      Unreliable: false
+      Use Fixed Frame: true
+      Use rainbow: true
+      Value: true
+    - Alpha: 0.5
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 10
+        Min Value: -10
+        Value: true
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz/PointCloud2
+      Color: 255; 255; 255
+      Color Transformer: Intensity
+      Decay Time: 0
+      Enabled: true
+      Invert Rainbow: false
+      Max Color: 255; 255; 255
+      Max Intensity: 0.247867778
+      Min Color: 0; 0; 0
+      Min Intensity: 0.247867778
+      Name: GT cluster
+      Position Transformer: XYZ
+      Queue Size: 10
+      Selectable: true
+      Size (Pixels): 3
+      Size (m): 0.699999988
+      Style: Boxes
+      Topic: /annotation_pub
       Unreliable: false
       Use Fixed Frame: true
       Use rainbow: true
