@@ -9,7 +9,7 @@
 #define stage_one_num 5
 #define stage_one_vel 0.3
 
-dbscan::dbscan(std::vector<cluster_point> &data)
+dbscan::dbscan(std::vector<cluster_point> data)
 {
     // initial input output data
     points = data;
