@@ -25,15 +25,20 @@ def csv_write(output_list):
     csv_path = os.path.join(output_dir,read_fold_name+'.csv')
     with open(csv_path,'w',newline='') as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow(['file name','total frames','V measure score','Homogeneity','H(C|K)','H(C)','Completeness','H(K|C)','H(K)']) # the first row of the csv file
+        writer.writerow(['File Name','Total Frames','Total Objects','Good Objects','Multiple Objects','No Objects','V measure score','Homogeneity','H(C|K)','H(C)','Completeness','H(K|C)','H(K)']) # the first row of the csv file
         ave_row =[]
-        ave_row.append('Ave')
+        ave_row.append('Ave'+' ('+str(len(output_list))+' bags)')
         output_array = np.asarray(output_list)
         output_array = np.asarray(output_array[:,1:],dtype=float)
         col_sum = output_array.sum(axis=0)
-        ave_row.append(str(int(col_sum[0]))+' ('+str(len(output_list))+' bags)')
-        col_sum = np.dot(output_array[:,0].reshape(1,len(output_array[:,0])),output_array[:,1:]) / int(col_sum[0])
-        # print(col_sum[0])
+        # print(col_sum)
+        ave_row.append(str(int(col_sum[0])))
+        ave_row.append(int(col_sum[1]))
+        ave_row.append(int(col_sum[2]))
+        ave_row.append(int(col_sum[3]))
+        ave_row.append(int(col_sum[4]))
+        col_sum = np.dot(output_array[:,0].reshape(1,len(output_array[:,0])),output_array[:,5:]) / int(col_sum[0])
+        # print(col_sum)
         for i in range(len(col_sum[0])):
             ave_row.append(col_sum[0,i])
         writer.writerow(ave_row)
@@ -42,7 +47,7 @@ def csv_write(output_list):
             for element in data:
                 row.append(element)
             writer.writerow(row)
-            if float(data[2]) < float(col_sum[0,0]):
+            if float(data[6]) < float(col_sum[0,0]):
                 if not under_ave:
                     under_ave = True
                     print('\033[1;94m'+'Below the average V-measure score'+'\033[0m')
@@ -52,6 +57,7 @@ def csv_write(output_list):
     return
 
 def csv_read():
+    print("Reading directory:",input_dir)
     files = os.listdir(input_dir)
     files.sort(key=lambda x:x[:5],reverse = True)
     files.sort(key=lambda x:x[-8:])
@@ -62,6 +68,10 @@ def csv_read():
         v_measure_score_list = []
         with open(csv_path,newline='') as csv_file:
             rows = csv.reader(csv_file)
+            obj_num = []
+            good_num = []
+            multi_num = []
+            no_num = []
             v_measure_score = []
             homo = []
             h_ck = []
@@ -76,13 +86,17 @@ def csv_read():
                     continue
                 if str(row).find('nan') != -1 or str(row).find('inf') != -1:
                     continue
-                v_measure_score.append(float(row[1]))
-                homo.append(float(row[2]))
-                h_ck.append(float(row[3]))
-                h_c.append(float(row[4]))
-                comp.append(float(row[5]))
-                h_kc.append(float(row[6]))
-                h_k.append(float(row[7]))
+                obj_num.append(int(row[1]))
+                good_num.append(int(row[2]))
+                multi_num.append(int(row[3]))
+                no_num.append(int(row[4]))
+                v_measure_score.append(float(row[5]))
+                homo.append(float(row[6]))
+                h_ck.append(float(row[7]))
+                h_c.append(float(row[8]))
+                comp.append(float(row[9]))
+                h_kc.append(float(row[10]))
+                h_k.append(float(row[11]))
             if len(v_measure_score) < 1:
                 if not Error_csv:
                     Error_csv = True
@@ -91,6 +105,10 @@ def csv_read():
                 continue
             v_measure_score_list.append(str(filename))
             v_measure_score_list.append(len(v_measure_score))
+            v_measure_score_list.append(sum(obj_num))
+            v_measure_score_list.append(sum(good_num))
+            v_measure_score_list.append(sum(multi_num))
+            v_measure_score_list.append(sum(no_num))
             v_measure_score_list.append(sum(v_measure_score) / len(v_measure_score))
             v_measure_score_list.append(sum(homo) / len(homo))
             v_measure_score_list.append(sum(h_ck) / len(h_ck))
