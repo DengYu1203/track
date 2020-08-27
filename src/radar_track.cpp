@@ -121,6 +121,7 @@ bool output_label_info = false; // print the annotation callback info
 bool output_score_info = false; // print the score_cluster info
 bool output_ego_vel_info = true;
 bool output_transform_info = true;
+bool output_score_mat_info = false;
 bool use_annotation_module = false; // true: repulish the global annotation and score the cluster performance
 bool use_KFT_module = true; // true: cluster and tracking, fasle: cluster only
 bool show_vel_marker = false;
@@ -157,7 +158,7 @@ typedef struct label_point
 }label_point;
 
 
-#define box_bias 1.2
+#define box_bias 1.25
 vector< label_point> label_vec;
 bool get_label = false;
 
@@ -208,6 +209,10 @@ enum class TRACK_STATE{
 // for score the cluster performance
 typedef struct cluster_score{
   int frame;
+  int object_num = 0;
+  int good_cluster = 0; // good cluster in gt
+  int multi_cluster = 0;  // multiple clusters in gt
+  int no_cluster = 0; // no cluster in gt
   double v_measure_score = 0;
   double homo = 0;
   double h_ck = 0;
@@ -1246,6 +1251,10 @@ void output_score(double beta, v_measure_score result){
     ofstream file;
     file.open(output_path, ios::out);
     file << "frame" << ",";
+    file << "obj num" << ",";
+    file << "good-obj num" << ",";
+    file << "multi-obj num" << ",";
+    file << "no-obj num" << ",";
     file << "V measure score (beta=" << fixed << setprecision(2) << beta << ")" << ",";
     file << "Homogeneity" << ",";
     file << "H(C|K)" << ",";
@@ -1258,6 +1267,10 @@ void output_score(double beta, v_measure_score result){
   ofstream file;
   file.open(output_path, ios::out|ios::app);
   file << setprecision(0) << result.frame << ",";
+  file << setprecision(0) << result.object_num << ",";
+  file << setprecision(0) << result.good_cluster << ",";
+  file << setprecision(0) << result.multi_cluster << ",";
+  file << setprecision(0) << result.no_cluster << ",";
   file << fixed << setprecision(3);
   file << result.v_measure_score << ",";
   file << result.homo << ",";
@@ -1274,9 +1287,10 @@ void score_cluster(std::vector<kf_tracker_point> score_cens, std::vector< std::v
   get_label = false;
   std::vector< std::vector<kf_tracker_point> > gt_cluster;
   cout << "\033[1;33mScore cluster performance\033[0m" << endl;
+  cout << "Timestamp: " << label_vec.at(0).marker.header.stamp.toSec() << endl;
   cout << "Reading bag: " << score_file_name << endl;
   cout << "Label size: " << label_vec.size() << endl;
-  cout << "Radar size: " << score_cens.size() << endl;
+  // cout << "Radar size: " << score_cens.size() << endl;
   int total_n = 0;
   for(int label_idx=0;label_idx<label_vec.size();label_idx++){
     std::vector<kf_tracker_point> label_list;
@@ -1340,13 +1354,8 @@ void score_cluster(std::vector<kf_tracker_point> score_cens, std::vector< std::v
     if(n != 0)
       gt_cluster.push_back(label_list);
   }
-  cout << "Timestamp: " << label_vec.at(0).marker.header.stamp.toSec() << endl;
-  // cout << "V-measurement matrix:\n";
-  cout << "Ground true (row): " << gt_cluster.size() << " ,DBSCAN cluster (col):" << dbscan_cluster.size() << endl;
-  cout << "n = " << total_n << endl;
   Eigen::MatrixXd v_measure_mat(gt_cluster.size(),dbscan_cluster.size()+1); // +1 for the noise cluster from dbscan
   Eigen::MatrixXd cluster_list_mat(1,dbscan_cluster.size()+1); // check the cluster performance
-  // Eigen::RowVectorXd col_sum_temp(dbscan_cluster.size());
   v_measure_mat.setZero();
   cluster_list_mat.setZero();
   color_cluster(gt_cluster,false);
@@ -1367,7 +1376,6 @@ void score_cluster(std::vector<kf_tracker_point> score_cens, std::vector< std::v
           continue;
         }
         std::vector<kf_tracker_point> temp_dbcluster = dbscan_cluster.at(cluster_idx);
-        // col_sum_temp(cluster_idx) = temp_dbcluster.size();
         for(int j=0;j<temp_dbcluster.size();j++){
           tf::Vector3 distance = tf::Vector3(temp_gt.at(i).x,temp_gt.at(i).y,0) - tf::Vector3(temp_dbcluster.at(j).x,temp_dbcluster.at(j).y,0);
           if(distance.length() <= 0.001){
@@ -1379,35 +1387,52 @@ void score_cluster(std::vector<kf_tracker_point> score_cens, std::vector< std::v
     }
   }
   int n = v_measure_mat.sum();
-  Eigen::MatrixXd cluster_score_output_mat(gt_cluster.size()+1,dbscan_cluster.size()+1); // check the cluster performance
-  cluster_score_output_mat << cluster_list_mat, v_measure_mat;
-  // cout << setprecision(0) << cluster_list_mat << endl;
-  // cout << setprecision(0) << v_measure_mat << endl;
-  cout << setprecision(0) << cluster_score_output_mat << endl;
-  cout << "v_measure_mat sum = " << n;
-  cout << endl;
-
+  
   // v-measure score calculation
   Eigen::RowVectorXd row_sum = v_measure_mat.rowwise().sum();
   Eigen::RowVectorXd col_sum = v_measure_mat.colwise().sum();
-  cout << "Original Col sum: " << col_sum << endl;
   // for(int i=0;i<dbscan_cluster.size();i++){
   //   if(col_sum(i)==0)
   //     continue;
   //   else
   //     col_sum(i) = dbscan_cluster.at(i).size();
   // }
+  cout << "Ground true (row): " << gt_cluster.size() << " ,DBSCAN cluster (col):" << dbscan_cluster.size() << endl;
+  // cout << "n = " << total_n << endl;
+  cout << "v_measure_mat sum = " << n;
+  cout << endl;
+  if(output_score_mat_info){
+    Eigen::MatrixXd cluster_score_output_mat(gt_cluster.size()+1,dbscan_cluster.size()+1); // check the cluster performance
+    cluster_score_output_mat << cluster_list_mat, v_measure_mat;
+    // cout << setprecision(0) << cluster_list_mat << endl;
+    // cout << setprecision(0) << v_measure_mat << endl;
+    cout << "V-measurement matrix:\n";
+    cout << setprecision(0) << cluster_score_output_mat << endl;
+    
+    cout << "Original Col sum: " << col_sum << endl;
+  }
   v_measure_score result;
   result.frame = ++score_frame;
+  result.object_num = gt_cluster.size();
   cout << setprecision(0);
   // cout << "Row sum: " << row_sum << endl;
   // cout << "After Col sum: " << col_sum << endl;
   for(int i=0;i<v_measure_mat.rows();i++){
+    bool check_cluster_state = false;
     for(int j=0;j<v_measure_mat.cols();j++){
       if(v_measure_mat(i,j) == 0 || col_sum(j) == 0)
         continue;
       else
         result.h_ck -= (v_measure_mat(i,j) / n) * log(v_measure_mat(i,j)/col_sum(j));
+      if(!check_cluster_state){
+        check_cluster_state = true;
+        if(v_measure_mat(i,j) < row_sum(i))
+          result.multi_cluster ++;
+        else if(j == v_measure_mat.cols()-1)
+          result.no_cluster ++;
+        else
+          result.good_cluster ++;
+      }
     }
     if(row_sum(i) == 0)
       continue;
@@ -1850,48 +1875,68 @@ void annotation(const visualization_msgs::MarkerArrayConstPtr& label){
     label_pt.pose = label_transform * label_pt.pose;
     tf::poseTFToMsg(label_pt.pose,label_pt.marker.pose);
 
-    label_pt.front_left = tf::Point(label->markers.at(i).pose.position.x - label->markers.at(i).scale.y/2 * box_bias,
-                                    label->markers.at(i).pose.position.y + label->markers.at(i).scale.x/2 * box_bias,
-                                    label->markers.at(i).pose.position.z + label->markers.at(i).scale.z/2);
-    label_pt.front_right = tf::Point(label->markers.at(i).pose.position.x + label->markers.at(i).scale.y/2 * box_bias,
-                                    label->markers.at(i).pose.position.y + label->markers.at(i).scale.x/2 * box_bias,
-                                    label->markers.at(i).pose.position.z + label->markers.at(i).scale.z/2);
-    label_pt.back_left = tf::Point(label->markers.at(i).pose.position.x - label->markers.at(i).scale.y/2 * box_bias,
-                                    label->markers.at(i).pose.position.y - label->markers.at(i).scale.x/2 * box_bias,
-                                    label->markers.at(i).pose.position.z + label->markers.at(i).scale.z/2);
-    label_pt.back_right = tf::Point(label->markers.at(i).pose.position.x + label->markers.at(i).scale.y/2 * box_bias,
-                                    label->markers.at(i).pose.position.y - label->markers.at(i).scale.x/2 * box_bias,
-                                    label->markers.at(i).pose.position.z + label->markers.at(i).scale.z/2);
-    // label_pt.front_left = tf::Point(label->markers.at(i).pose.position.x - label->markers.at(i).scale.x/2 - box_bias,
-    //                                 label->markers.at(i).pose.position.y + label->markers.at(i).scale.y/2 + box_bias,
-    //                                 label->markers.at(i).pose.position.z - label->markers.at(i).scale.z/2);
-    // label_pt.front_right = tf::Point(label->markers.at(i).pose.position.x + label->markers.at(i).scale.x/2 + box_bias,
-    //                                 label->markers.at(i).pose.position.y + label->markers.at(i).scale.y/2 + box_bias,
-    //                                 label->markers.at(i).pose.position.z - label->markers.at(i).scale.z/2);
-    // label_pt.back_left = tf::Point(label->markers.at(i).pose.position.x - label->markers.at(i).scale.x/2 - box_bias,
-    //                                 label->markers.at(i).pose.position.y - label->markers.at(i).scale.y/2 -box_bias,
-    //                                 label->markers.at(i).pose.position.z - label->markers.at(i).scale.z/2);
-    // label_pt.back_right = tf::Point(label->markers.at(i).pose.position.x + label->markers.at(i).scale.x/2 + box_bias,
-    //                                 label->markers.at(i).pose.position.y - label->markers.at(i).scale.y/2 -box_bias,
-    //                                 label->markers.at(i).pose.position.z - label->markers.at(i).scale.z/2);
-    tf::Quaternion label_q;
-    tf::quaternionMsgToTF(label->markers.at(i).pose.orientation,label_q);
-    label_pt.front_left = (label_transform * tf::Pose(label_q,tf::Vector3(label_pt.front_left.x(),label_pt.front_left.y(),label_pt.front_left.z()))).getOrigin();
-    label_pt.front_left.setZ(0);
-    label_pt.front_right = (label_transform * tf::Pose(label_q,tf::Vector3(label_pt.front_right.x(),label_pt.front_right.y(),label_pt.front_right.z()))).getOrigin();
-    label_pt.front_right.setZ(0);
-    label_pt.back_left = (label_transform * tf::Pose(label_q,tf::Vector3(label_pt.back_left.x(),label_pt.back_left.y(),label_pt.back_left.z()))).getOrigin();
-    label_pt.back_left.setZ(0);
-    label_pt.back_right = (label_transform * tf::Pose(label_q,tf::Vector3(label_pt.back_right.x(),label_pt.back_right.y(),label_pt.back_right.z()))).getOrigin();
-    label_pt.back_right.setZ(0);
-    // label_pt.front_left = label_transform * label_pt.front_left;
+    // label_pt.front_left = tf::Point(label->markers.at(i).pose.position.x - label->markers.at(i).scale.y/2 * box_bias,
+    //                                 label->markers.at(i).pose.position.y + label->markers.at(i).scale.x/2 * box_bias,
+    //                                 label->markers.at(i).pose.position.z + label->markers.at(i).scale.z/2);
+    // label_pt.front_right = tf::Point(label->markers.at(i).pose.position.x + label->markers.at(i).scale.y/2 * box_bias,
+    //                                 label->markers.at(i).pose.position.y + label->markers.at(i).scale.x/2 * box_bias,
+    //                                 label->markers.at(i).pose.position.z + label->markers.at(i).scale.z/2);
+    // label_pt.back_left = tf::Point(label->markers.at(i).pose.position.x - label->markers.at(i).scale.y/2 * box_bias,
+    //                                 label->markers.at(i).pose.position.y - label->markers.at(i).scale.x/2 * box_bias,
+    //                                 label->markers.at(i).pose.position.z + label->markers.at(i).scale.z/2);
+    // label_pt.back_right = tf::Point(label->markers.at(i).pose.position.x + label->markers.at(i).scale.y/2 * box_bias,
+    //                                 label->markers.at(i).pose.position.y - label->markers.at(i).scale.x/2 * box_bias,
+    //                                 label->markers.at(i).pose.position.z + label->markers.at(i).scale.z/2);
+    
+    // label_pt.front_left = tf::Point(label->markers.at(i).pose.position.x - label->markers.at(i).scale.x/2 * box_bias,
+    //                                 label->markers.at(i).pose.position.y + label->markers.at(i).scale.y/2 * box_bias,
+    //                                 label->markers.at(i).pose.position.z + label->markers.at(i).scale.z/2);
+    // label_pt.front_right = tf::Point(label->markers.at(i).pose.position.x + label->markers.at(i).scale.x/2 * box_bias,
+    //                                 label->markers.at(i).pose.position.y + label->markers.at(i).scale.y/2 * box_bias,
+    //                                 label->markers.at(i).pose.position.z + label->markers.at(i).scale.z/2);
+    // label_pt.back_left = tf::Point(label->markers.at(i).pose.position.x - label->markers.at(i).scale.x/2 * box_bias,
+    //                                 label->markers.at(i).pose.position.y - label->markers.at(i).scale.y/2 * box_bias,
+    //                                 label->markers.at(i).pose.position.z + label->markers.at(i).scale.z/2);
+    // label_pt.back_right = tf::Point(label->markers.at(i).pose.position.x + label->markers.at(i).scale.x/2 * box_bias,
+    //                                 label->markers.at(i).pose.position.y - label->markers.at(i).scale.y/2 * box_bias,
+    //                                 label->markers.at(i).pose.position.z + label->markers.at(i).scale.z/2);
+    
+    label_pt.front_left = tf::Point(-label->markers.at(i).scale.x/2 * box_bias,
+                                    label->markers.at(i).scale.y/2 * box_bias,
+                                    label->markers.at(i).scale.z/2);
+    label_pt.front_right = tf::Point(label->markers.at(i).scale.x/2 * box_bias,
+                                    label->markers.at(i).scale.y/2 * box_bias,
+                                    label->markers.at(i).scale.z/2);
+    label_pt.back_left = tf::Point(-label->markers.at(i).scale.x/2 * box_bias,
+                                    -label->markers.at(i).scale.y/2 * box_bias,
+                                    label->markers.at(i).scale.z/2);
+    label_pt.back_right = tf::Point(label->markers.at(i).scale.x/2 * box_bias,
+                                    -label->markers.at(i).scale.y/2 * box_bias,
+                                    label->markers.at(i).scale.z/2);
+    label_pt.front_left = label_pt.pose * label_pt.front_left;
+    label_pt.front_right = label_pt.pose * label_pt.front_right;
+    label_pt.back_left = label_pt.pose * label_pt.back_left;
+    label_pt.back_right = label_pt.pose * label_pt.back_right;
+
+    // tf::Quaternion label_q;
+    // tf::quaternionMsgToTF(label->markers.at(i).pose.orientation,label_q);
+    // label_pt.front_left = (label_transform * tf::Pose(label_q,tf::Vector3(label_pt.front_left.x(),label_pt.front_left.y(),label_pt.front_left.z()))).getOrigin();
     // label_pt.front_left.setZ(0);
-    // label_pt.front_right = label_transform * label_pt.front_right;
+    // label_pt.front_right = (label_transform * tf::Pose(label_q,tf::Vector3(label_pt.front_right.x(),label_pt.front_right.y(),label_pt.front_right.z()))).getOrigin();
     // label_pt.front_right.setZ(0);
-    // label_pt.back_left = label_transform * label_pt.back_left;
+    // label_pt.back_left = (label_transform * tf::Pose(label_q,tf::Vector3(label_pt.back_left.x(),label_pt.back_left.y(),label_pt.back_left.z()))).getOrigin();
     // label_pt.back_left.setZ(0);
-    // label_pt.back_right = label_transform * label_pt.back_right;
+    // label_pt.back_right = (label_transform * tf::Pose(label_q,tf::Vector3(label_pt.back_right.x(),label_pt.back_right.y(),label_pt.back_right.z()))).getOrigin();
     // label_pt.back_right.setZ(0);
+
+    // label_pt.front_left = label_transform * label_pt.front_left;
+    label_pt.front_left.setZ(0);
+    // label_pt.front_right = label_transform * label_pt.front_right;
+    label_pt.front_right.setZ(0);
+    // label_pt.back_left = label_transform * label_pt.back_left;
+    label_pt.back_left.setZ(0);
+    // label_pt.back_right = label_transform * label_pt.back_right;
+    label_pt.back_right.setZ(0);
 
     // if(output_label_info){
     //   cout << "--------------------------------------\n";
@@ -1989,6 +2034,7 @@ int main(int argc, char** argv){
   nh.param<bool>("output_score_info"    ,output_score_info    ,false);
   nh.param<bool>("output_ego_vel_info"  ,output_ego_vel_info  ,true);
   nh.param<bool>("output_transform_info",output_transform_info,true);
+  nh.param<bool>("output_score_mat_info",output_score_mat_info,true);
   nh.param<bool>("DA_method"            ,DA_choose            ,false);
   nh.param<bool>("use_KFT_module"       ,use_KFT_module       ,true);
   nh.param<int> ("kft_id_num"           ,kft_id_num           ,1);
@@ -2026,6 +2072,7 @@ int main(int argc, char** argv){
   ROS_INFO("output execution time : %s"   , output_exe_time ? "True" : "False");
   ROS_INFO("output label info : %s"       , output_label_info ? "True" : "False");
   ROS_INFO("output score info : %s"       , output_score_info ? "True" : "False");
+  ROS_INFO("output score mat info : %s"   , output_score_mat_info ? "True" : "False");
   ROS_INFO("output ego vel info : %s"     , output_ego_vel_info ? "True" : "False");
   ROS_INFO("output transform info : %s"   , output_transform_info ? "True" : "False");
   ROS_INFO("get transform : %s"           , get_transformer ? "true" : "false");
@@ -2036,6 +2083,7 @@ int main(int argc, char** argv){
   }
   if(use_score_cluster){
     ROS_INFO("use score-cluster and ego-motion in/outliner callback function");
+    ROS_INFO("Box bias: %f", box_bias);
   }
   else{
     ROS_INFO("use %s callback function"          , use_ego_callback ? "ego-motion in/outliner" : "original");
