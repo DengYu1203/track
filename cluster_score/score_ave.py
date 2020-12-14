@@ -8,9 +8,11 @@ code_path = os.path.dirname(os.path.realpath(__file__))
 current_files = os.listdir(code_path)
 current_files.sort(reverse = True)
 # print(current_files)
-# read_fold_name = '2020-Aug-16'
-read_fold_name = current_files[2]   # 0:score_ave.py, 1: Average folder
+# read_fold_name = '2020-Aug-26'
+read_fold_name = current_files[3]   # 0:score_ave.py, 1: center.py, 2: Average folder
 input_dir = os.path.join(code_path,read_fold_name)
+
+ignore_name = ['log1']
 
 output_dir = os.path.join(code_path,'Average')
 if not os.path.exists(output_dir):
@@ -23,10 +25,12 @@ def csv_write(output_list):
     global under_ave
     under_ave_count = 0
     csv_path = os.path.join(output_dir,read_fold_name+'.csv')
+    # the first row of the csv file
+    csv_first_row = ['File Name','Total Frames','Total Objects','Good Objects','Multiple Objects','No Objects','V measure score','Homogeneity','H(C|K)','H(C)','Completeness','H(K|C)','H(K)']
+    ave_row =[]
     with open(csv_path,'w',newline='') as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow(['File Name','Total Frames','Total Objects','Good Objects','Multiple Objects','No Objects','V measure score','Homogeneity','H(C|K)','H(C)','Completeness','H(K|C)','H(K)']) # the first row of the csv file
-        ave_row =[]
+        writer.writerow(csv_first_row)
         ave_row.append('Ave'+' ('+str(len(output_list))+' bags)')
         output_array = np.asarray(output_list)
         output_array = np.asarray(output_array[:,1:],dtype=float)
@@ -47,14 +51,23 @@ def csv_write(output_list):
             for element in data:
                 row.append(element)
             writer.writerow(row)
-            if float(data[6]) < float(col_sum[0,0]):
-                if not under_ave:
-                    under_ave = True
-                    print('\033[1;94m'+'Below the average V-measure score'+'\033[0m')
-                print(data[0])
-                under_ave_count += 1
-    print('\033[1;94m'+str(under_ave_count)+' files below the average (total '+str(len(output_list))+' files)'+'\033[0m')
+            # if float(data[6]) < float(col_sum[0,0]):
+            #     if not under_ave:
+            #         under_ave = True
+            #         print('\033[1;94m'+'Below the average V-measure score'+'\033[0m')
+            #     print(data[0])
+                # under_ave_count += 1
+    # print('\033[1;94m'+str(under_ave_count)+' files below the average (total '+str(len(output_list))+' files)'+'\033[0m')
+    print(csv_first_row[0:7])
+    print(ave_row[0:7])
     return
+
+def ignore_file(filename):
+    global ignore_name
+    for ignore in ignore_name:
+        if filename.find(ignore) != -1:
+            return True
+    return False
 
 def csv_read():
     print("Reading directory:",input_dir)
@@ -64,6 +77,8 @@ def csv_read():
     output_list = []
     global Error_csv
     for filename in files:
+        if ignore_file(filename):
+            continue
         csv_path = os.path.join(input_dir,filename)
         v_measure_score_list = []
         with open(csv_path,newline='') as csv_file:
