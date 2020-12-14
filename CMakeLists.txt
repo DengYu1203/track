@@ -40,7 +40,7 @@ target_link_libraries(kal
 )
 
 add_executable(radar_track
-   src/radar_track.cpp src/Hungarian.cpp src/dbscan.cpp)
+   src/radar_track.cpp src/Hungarian.cpp src/dbscan.cpp src/cluster_visual.cpp)
 
 target_link_libraries(radar_track
   ${catkin_LIBRARIES}
