@@ -30,8 +30,10 @@
         <param name="use_ego_callback"      value="true"/>
         <param name="use_5_radar"           value="false"/>
         <param name="get_transformer"       value="true"/>
+        <param name="cluster_type"          value="dbpda"/>
         
         <param name="use_score_cluster"     value="true"/>
+        <param name="csv_name"              value="Eps-3.0_N-2_"/>
 
     <param name="use_sim_time" value="true"/>
 </launch>
