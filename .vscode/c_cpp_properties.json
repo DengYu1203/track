@@ -17,7 +17,8 @@
                 "/home/user/deng/catkin_deng/src/radar_odometry/include/**",
                 "/home/user/deng/catkin_deng/src/track/include/**",
                 "/home/user/deng/catkin_deng/src/conti_radar/**",
-                "/usr/include/**"
+                "/usr/include/**",
+                "/usr/src/**"
             ],
             "name": "ROS",
             "intelliSenseMode": "gcc-x64",
