@@ -16,7 +16,6 @@
 dbscan::dbscan()
 {
     // initial input output data
-    // points = data;
     in_points.clear();
     out_points.clear();
     center.clear();
@@ -38,9 +37,8 @@ dbscan::dbscan()
     // vel_scaling = data_period*1.5;
     vel_scaling = 1;
     output_info = true;
-    use_RANSAC = false;
+    output_param_optimize = true;
     use_vel_scaling = false;
-    // first = true;
     frame_state = FRAME_STATE::first;
 }
 
@@ -48,7 +46,7 @@ dbscan::~dbscan(){}
 
 
 // cluster points without RANSAC
-std::vector< std::vector<cluster_point> > dbscan::cluster_test(std::vector<cluster_point> data){
+std::vector< std::vector<cluster_point> > dbscan::cluster(std::vector<cluster_point> data){
     // initial dbscan parameter (from slow to fast)
     points.clear();
     points = data;
@@ -180,178 +178,27 @@ std::vector< std::vector<cluster_point> > dbscan::cluster_test(std::vector<clust
         }
 
     }
+    
     remove(cluster_list);
     cluster_center(cluster_list);
+
+    if(output_param_optimize){
+        std::vector<double> eps_optimize_min;
+        // std::cout << "============================================" << std::endl;
+        for(int i=0;i<cluster_list.size();i++){
+            // std::cout << "--------------------- Cluster " << i << " ---------------------" << std::endl;
+            if(cluster_list.at(i).size() <= 1){
+                // std::cout << "Cluster size = "<<cluster_list.at(i).size()<<"!!" << std::endl;
+                continue;
+            }
+            eps_optimize_min.push_back(find_near_min(cluster_list.at(i),1));
+        }
+        double ave_min_distance = std::accumulate(eps_optimize_min.begin(),eps_optimize_min.end(),0.0) / eps_optimize_min.size();
+        // std::cout << "============================================" << std::endl;
+        std::cout << "Average eps = " << ave_min_distance << "(n = " << eps_optimize_min.size() << ")" << std::endl;
+    }
     // cluster_list.insert(cluster_list.end(),non_cluster_list.begin(),non_cluster_list.end());
     return cluster_list;
-}
-
-// cluster the in/outlier data (inlier -> outlier)
-std::vector< std::vector<cluster_point> > dbscan::cluster_from_RANSAC(std::vector<cluster_point> inlier,std::vector<cluster_point> outlier){
-    use_RANSAC = true;
-    param.eps[0] = 3.0;
-    param.MinPts[0] = 2;
-    param.eps[1] = 2.5;
-    param.MinPts[1] = 2;
-    param.eps[2] = 2.0;
-    param.MinPts[2] = 2;
-    param.eps[3] = 1.5;
-    param.MinPts[3] = 1;
-    in_points = inlier;
-    out_points = outlier;
-    cluster_idx.assign(in_points.size()+out_points.size(),-1);
-    points.clear();
-    points = in_points;
-    cluster_idx.assign(points.size(),-1);
-    if(output_info){
-        cout << endl << "RANSAC + DBSCAN cluster" << endl;
-        cout << "Inlier points:" << in_points.size() << " , Outlier points:" << out_points.size() << endl;
-    }
-    // inlier cluster part
-    for(int i=0;i<in_points.size();i++){
-        if(in_points.at(i).vistited && cluster_idx.at(i)!=-1)
-            continue;
-        in_points.at(i).vistited = true;
-        cluster_point core_pt = in_points.at(i);
-        int core_level = decide_vel_level(core_pt.vel);
-        std::vector<int> neighbor = find_neighbor(core_pt, core_level);
-        if(neighbor.size() >= param.MinPts[core_level]){
-            cluster_idx.at(i) = cluster_count;
-            expand_neighbor(neighbor);
-            cluster_count ++;
-        }
-    }
-    std::vector< std::vector<cluster_point> > cluster_list(cluster_count);
-    std::vector<cluster_point> non_cluster_list;
-    for(int j=0;j<cluster_idx.size();j++){
-        if(cluster_idx.at(j)!=-1)
-            cluster_list.at(cluster_idx.at(j)).push_back(points.at(j));
-        else{
-            points.at(j).cluster_flag = -1;
-            points.at(j).vistited = false;
-            non_cluster_list.push_back(points.at(j));
-        }
-    }
-    // if(output_info){
-    //     cout<<"\nRANSAC+DBSCAN cluster index (inlier):\n";
-    //     cout<<"==============================\n";
-    //     int cluster_num = 0;
-    //     for(int k=0;k<cluster_list.size();k++){
-    //         if(k != 0)
-    //             cout<<"----------------------\n";
-    //         cout<<"cluster index: "<<k<<endl<<endl;
-    //         for(int idx=0;idx<cluster_list.at(k).size();idx++){
-    //             cout<<"\tPosition:("<<cluster_list.at(k).at(idx).x<<","<<cluster_list.at(k).at(idx).y<<")"<<endl;
-    //             cout<<"\tVelocity: "<<cluster_list.at(k).at(idx).vel<<" ("<<cluster_list.at(k).at(idx).x_v<<","<<cluster_list.at(k).at(idx).y_v<<")\n"<<endl;
-    //             cluster_num ++;
-    //         }
-    //     }
-    // }
-    
-    stage_one_cluster = cluster_list;
-    // stage_one_cluster = stage_one_filter(cluster_list);
-    // points = delist(cluster_list);
-    // non_cluster_list.insert(non_cluster_list.end(),points.begin(),points.end());
-    
-    non_cluster_list.insert(non_cluster_list.end(),out_points.begin(),out_points.end());
-    state++;
-    cluster_idx.clear();
-    cluster_idx.assign(non_cluster_list.size(),-1);
-    cluster_count = 0;
-    param.eps[0] = 2.8;
-    param.MinPts[0] = 2;
-    param.eps[1] = 2.3;
-    param.MinPts[1] = 1;
-    param.eps[2] = 1.5;
-    param.MinPts[2] = 1;
-    param.eps[3] = 1.0;
-    param.MinPts[3] = 1;
-    // param.eps[0] = 2.2;
-    // param.MinPts[0] = 2;
-    // param.eps[1] = 1.8;
-    // param.MinPts[1] = 2;
-    // param.eps[2] = 1.5;
-    // param.MinPts[2] = 2;
-    // param.eps[3] = 1.2;
-    // param.MinPts[3] = 1;
-
-    points.clear();
-    points = non_cluster_list;
-    // outlier cluster part
-    for(int i=0;i<points.size();i++){
-        if(points.at(i).vistited && cluster_idx.at(i)!=-1)
-            continue;
-        points.at(i).vistited = true;
-        cluster_point core_pt = points.at(i);
-        int core_level = decide_vel_level(core_pt.vel);
-        std::vector<int> neighbor = find_neighbor(core_pt, core_level);
-        if(neighbor.size() >= param.MinPts[core_level]){
-            cluster_idx.at(i) = cluster_count;
-            expand_neighbor(neighbor);
-            cluster_count ++;
-        }
-    }
-    std::vector< std::vector<cluster_point> > cluster_list2(cluster_count);
-    for(int j=0;j<cluster_idx.size();j++){
-        if(cluster_idx.at(j)!=-1)
-            cluster_list2.at(cluster_idx.at(j)).push_back(points.at(j));
-    }
-    // if(output_info){
-    //     cout<<"\nRANSAC+DBSCAN cluster index (outlier):\n";
-    //     cout<<"==============================\n";
-    //     int cluster_num = 0;
-    //     for(int k=0;k<cluster_list2.size();k++){
-    //         if(k != 0)
-    //             cout<<"----------------------\n";
-    //         cout<<"cluster index: "<<k<<endl<<endl;
-    //         for(int idx=0;idx<cluster_list2.at(k).size();idx++){
-    //             cout<<"\tPosition:("<<cluster_list2.at(k).at(idx).x<<","<<cluster_list2.at(k).at(idx).y<<")"<<endl;
-    //             cout<<"\tVelocity: "<<cluster_list2.at(k).at(idx).vel<<" ("<<cluster_list2.at(k).at(idx).x_v<<","<<cluster_list2.at(k).at(idx).y_v<<")\n"<<endl;
-    //             cluster_num ++;
-    //         }
-    //     }
-    // }
-    cluster_list.clear();
-    cluster_list = stage_one_cluster;
-    cluster_list.insert(cluster_list.end(),cluster_list2.begin(),cluster_list2.end());
-    cluster_center(cluster_list);
-    merge(cluster_list);
-    merge(cluster_list);
-    if(output_info){
-        cout<<"\nRANSAC+DBSCAN cluster index (total):\n";
-        cout<<"Before merge -> Inlier:"<<stage_one_cluster.size()<<" , Outlier:"<<cluster_list2.size()<<endl;
-        cout<<"==============================\n";
-        int cluster_num = 0;
-        for(int k=0;k<cluster_list.size();k++){
-            if(k != 0)
-                cout<<"----------------------\n";
-            cout<<"cluster index: "<<k<<endl;
-            cout<<"\033[1;33mcenter position: (" << center.at(k).x << "," << center.at(k).y << ")\033[0m";
-            cout<<endl;
-            cout<<"\033[1;33mcenter velocity: (" << center.at(k).x_v << "," << center.at(k).y_v << ")\033[0m";
-            cout<<endl<<endl;
-            for(int idx=0;idx<cluster_list.at(k).size();idx++){
-                cout<<"\tPosition: ("<<cluster_list.at(k).at(idx).x<<","<<cluster_list.at(k).at(idx).y<<")"<<endl;
-                cout<<"\tVelocity: "<<cluster_list.at(k).at(idx).vel<<" ("<<cluster_list.at(k).at(idx).x_v<<","<<cluster_list.at(k).at(idx).y_v<<")"<<endl;
-                cout<<endl;
-                cluster_num ++;
-            }
-        }
-        // cout<<"==============================\n";
-        // cout<<"------------------------------------------\n";
-        // cout<<"\nVar info:\n";
-        // cout<<" x     y     z     vx    vy    vz"<<endl;
-        // for(int i=0;i<var_list.size();i++){
-        //     cout << var_list.at(i).transpose() << endl;
-        // }
-        // cout<<"------------------------------------------\n";
-    }
-    return cluster_list;
-}
-
-// return stage one cluster
-std::vector< std::vector<cluster_point> > dbscan::stage_one_result(void){
-    return stage_one_cluster;
 }
 
 // return the cluster number after cluster function
@@ -359,19 +206,28 @@ int dbscan::cluster_num(void){
     return cluster_count;
 }
 
+double dbscan::vel_function(double delta_v){
+    // return delta_v * vel_scaling;
+    // return std::exp(std::fabs(delta_v)) - 1;
+    return std::pow(2,std::fabs(delta_v)) - 1;
+}
+
 std::vector<int> dbscan::find_neighbor(cluster_point pt, int vel_level){
     std::vector<int> neighbor_cluster;
     neighbor_cluster.clear();
     if(use_vel_scaling){
-        Eigen::Vector3f core_pt(pt.x,pt.y,pt.vel*vel_scaling);
-        double eps = 3.0;
+        // Eigen::Vector3f core_pt(pt.x,pt.y,pt.vel*vel_scaling);
+        Eigen::Vector2f core_pt(pt.x,pt.y);
+        // double eps = 2.0;
+        double eps = 2.5;
         // double eps = 2.5  + 1.2*(data_vel.ave - pt.vel)/data_vel.range;
         // double eps = scan_eps - 1.2*abs(data_vel.ave - pt.vel)/data_vel.range;
         // double eps = scan_eps;
         for(int i=0;i<points.size();i++){
             cluster_point temp = points.at(i);
-            Eigen::Vector3f neighbor(temp.x,temp.y,temp.vel*vel_scaling);
-            if((core_pt-neighbor).norm() <= eps){
+            // Eigen::Vector3f neighbor(temp.x,temp.y,temp.vel*vel_scaling);
+            Eigen::Vector2f neighbor(temp.x,temp.y);
+            if(((core_pt-neighbor).squaredNorm() + vel_function(pt.vel-temp.vel)) <= eps*eps){
                 neighbor_cluster.push_back(i);
             }
         }
@@ -414,58 +270,29 @@ void dbscan::expand_neighbor(std::vector<int> neighbor){
 }
 
 int dbscan::decide_vel_level(double vel){
-    if(!use_RANSAC){
-        switch (state){
-            case 1:
-                if(vel <= 0.05)
-                    return 0;
-                else if(vel <= 0.1)
-                    return 1;
-                else if(vel <= 0.25)
-                    return 2;
-                else
-                    return 3;
-                break;
-            case 2:
-                if(vel <= 0.1)
-                    return 0;
-                else if(vel <= 0.2)
-                    return 1;
-                else if(vel <= 0.3)
-                    return 2;
-                else
-                    return 3;
-            
-            default:
-                break;
-        }
-    }
-    // use RANSAC to get the in/outlier pts
-    else{
-        switch (state){
-            case 1:
-                if(vel <= 0.05)
-                    return 0;
-                else if(vel <= 0.1)
-                    return 1;
-                else if(vel <= 0.25)
-                    return 2;
-                else
-                    return 3;
-                break;
-            case 2:
-                if(vel <= 3.0)
-                    return 0;
-                else if(vel <= 4.5)
-                    return 1;
-                else if(vel <= 5.5)
-                    return 2;
-                else
-                    return 3;
-            
-            default:
-                break;
-        }
+    switch (state){
+        case 1:
+            if(vel <= 0.05)
+                return 0;
+            else if(vel <= 0.1)
+                return 1;
+            else if(vel <= 0.25)
+                return 2;
+            else
+                return 3;
+            break;
+        case 2:
+            if(vel <= 0.1)
+                return 0;
+            else if(vel <= 0.2)
+                return 1;
+            else if(vel <= 0.3)
+                return 2;
+            else
+                return 3;
+        
+        default:
+            break;
     }
 }
 
@@ -495,30 +322,6 @@ std::vector<cluster_point> dbscan::delist(std::vector< std::vector<cluster_point
     return output_list;
 }
 
-std::vector< std::vector<cluster_point> > dbscan::stage_one_filter(std::vector< std::vector<cluster_point> > &cluster_list){
-    std::vector< std::vector<cluster_point> > copy_list = cluster_list;
-    std::vector< std::vector<cluster_point> > stage_one_list;
-    std::vector< int > remove_list;
-    for(int idx=0;idx<copy_list.size();idx++){
-        if(copy_list.at(idx).size() >= stage_one_num){
-            bool check_vel = true;
-            for(int j=0;j<copy_list.at(idx).size();j++){
-                if(copy_list.at(idx).at(j).vel > stage_one_vel){
-                    check_vel = false;
-                    break;
-                }
-            }
-            if(check_vel){
-                stage_one_list.push_back(copy_list.at(idx));
-                remove_list.push_back(idx);
-            }
-        }
-    }
-    for(int i=remove_list.size()-1;i>=0;i--){
-        cluster_list.erase(cluster_list.begin()+remove_list.at(i));
-    }
-    return stage_one_list;
-}
 
 /*
  * calculate the center and the variance of the cluster_list
@@ -739,4 +542,40 @@ void dbscan::grid(double grid_size){
     }
     kdtree.setInputCloud(input_cloud);
     // kdtree.set
+}
+
+double dbscan::find_near_min(std::vector<cluster_point> kd_cloud, int k=1){
+    pcl::KdTreeFLANN<pcl::PointXYZ> kdtree;
+    pcl::PointCloud<pcl::PointXYZ>::Ptr input_cloud(new pcl::PointCloud<pcl::PointXYZ>);
+    for(int i=1;i<kd_cloud.size();i++){
+        pcl::PointXYZ temp_pt;
+        temp_pt.x = kd_cloud.at(i).x;
+        temp_pt.y = kd_cloud.at(i).y;
+        temp_pt.z = kd_cloud.at(i).vel*vel_scaling;
+        input_cloud->points.push_back(temp_pt);
+    }
+    kdtree.setInputCloud(input_cloud);
+
+    pcl::PointXYZ searchPoint;
+	searchPoint.x = kd_cloud.at(0).x;
+	searchPoint.y = kd_cloud.at(0).y;
+	searchPoint.z = kd_cloud.at(0).vel*vel_scaling;
+
+    std::vector<int> pointIdxNKNSearch(k);
+	std::vector<float> pointNKNSquaredDistance(k);
+    // std::cout << "K nearest neighbor search at (" << searchPoint.x
+	// 	<< " " << searchPoint.y	<< " " << searchPoint.z	<< ") with K=" << k << std::endl;
+	if (kdtree.nearestKSearch(searchPoint, k, pointIdxNKNSearch, pointNKNSquaredDistance) > 0)
+	{
+		for (size_t i = 0; i < pointIdxNKNSearch.size(); ++i)
+		{
+
+			// std::cout << "    " << input_cloud->points[pointIdxNKNSearch[i]].x << " " << input_cloud->points[pointIdxNKNSearch[i]].y
+			// 	<< " " << input_cloud->points[pointIdxNKNSearch[i]].z << " (distance: " << std::sqrt(pointNKNSquaredDistance[i]) << ")" << std::endl;
+            // std::cout << "    " << "squared distance: " << pointNKNSquaredDistance[i] << std::endl;
+		}
+	}
+    
+    return std::sqrt(pointNKNSquaredDistance[0]);
+
 }
