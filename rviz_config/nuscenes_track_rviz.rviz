@@ -18,7 +18,7 @@ Panels:
     Experimental: false
     Name: Time
     SyncMode: 0
-    SyncSource: Image_front_left
+    SyncSource: ""
   - Class: rviz/Displays
     Help Height: 0
     Name: Displays
@@ -54,70 +54,13 @@ Visualization Manager:
       Frame Timeout: 300
       Frames:
         All Enabled: true
-        car:
-          Value: true
-        lidar_label:
-          Value: true
-        map:
-          Value: true
-        nuscenes_cam_back:
-          Value: true
-        nuscenes_cam_back_left:
-          Value: true
-        nuscenes_cam_back_right:
-          Value: true
-        nuscenes_cam_front:
-          Value: true
-        nuscenes_cam_front_left:
-          Value: true
-        nuscenes_cam_front_right:
-          Value: true
-        nuscenes_lidar:
-          Value: true
-        nuscenes_radar_back_left:
-          Value: true
-        nuscenes_radar_back_right:
-          Value: true
-        nuscenes_radar_front:
-          Value: true
-        nuscenes_radar_front_left:
-          Value: true
-        nuscenes_radar_front_right:
-          Value: true
       Marker Scale: 1
       Name: TF
       Show Arrows: true
       Show Axes: true
       Show Names: true
       Tree:
-        map:
-          car:
-            lidar_label:
-              {}
-            nuscenes_cam_back:
-              {}
-            nuscenes_cam_back_left:
-              {}
-            nuscenes_cam_back_right:
-              {}
-            nuscenes_cam_front:
-              {}
-            nuscenes_cam_front_left:
-              {}
-            nuscenes_cam_front_right:
-              {}
-            nuscenes_lidar:
-              {}
-            nuscenes_radar_back_left:
-              {}
-            nuscenes_radar_back_right:
-              {}
-            nuscenes_radar_front:
-              {}
-            nuscenes_radar_front_left:
-              {}
-            nuscenes_radar_front_right:
-              {}
+        {}
       Update Interval: 0
       Value: true
     - Class: rviz/Axes
@@ -140,24 +83,25 @@ Visualization Manager:
       Marker Topic: /map_annotation
       Name: map annotation
       Namespaces:
-        human.pedestrian.adult: true
-        movable_object.barrier: true
-        movable_object.debris: true
-        movable_object.trafficcone: true
-        vehicle.bus.bendy: true
-        vehicle.car: true
-        vehicle.construction: true
-        vehicle.truck: true
+        {}
       Queue Size: 100
       Value: true
     - Class: rviz/MarkerArray
-      Enabled: false
+      Enabled: true
       Marker Topic: /tracking_id
       Name: track id
       Namespaces:
         {}
       Queue Size: 100
-      Value: false
+      Value: true
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: /radar_tracking_v
+      Name: tracking vel
+      Namespaces:
+        {}
+      Queue Size: 100
+      Value: true
     - Class: rviz/MarkerArray
       Enabled: false
       Marker Topic: /radar_front_v
@@ -167,29 +111,29 @@ Visualization Manager:
       Queue Size: 100
       Value: false
     - Class: rviz/MarkerArray
-      Enabled: true
+      Enabled: false
       Marker Topic: /radar_front_v_comp
       Name: radar_v_comp
       Namespaces:
-        "": true
+        {}
       Queue Size: 100
-      Value: true
+      Value: false
     - Class: rviz/MarkerArray
-      Enabled: true
+      Enabled: false
       Marker Topic: /cluster_index
       Name: cluster index
       Namespaces:
-        "": true
+        {}
       Queue Size: 100
-      Value: true
+      Value: false
     - Class: rviz/MarkerArray
-      Enabled: true
+      Enabled: false
       Marker Topic: /cluster_hull
       Name: cluster hull
       Namespaces:
-        cluster_polygon: true
+        {}
       Queue Size: 100
-      Value: true
+      Value: false
     - Class: rviz/MarkerArray
       Enabled: true
       Marker Topic: /tracking_trajectory_path
@@ -514,7 +458,7 @@ Visualization Manager:
       Channel Name: intensity
       Class: rviz/PointCloud2
       Color: 44; 102; 32
-      Color Transformer: FlatColor
+      Color Transformer: RGB8
       Decay Time: 0
       Enabled: true
       Invert Rainbow: false
