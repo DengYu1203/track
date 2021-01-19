@@ -8,7 +8,7 @@ code_path = os.path.dirname(os.path.realpath(__file__))
 current_files = os.listdir(code_path)
 current_files.sort(reverse = True)
 # print(current_files)
-read_fold_name = '2020-Dec-16'
+read_fold_name = '2021-Jan-15'
 # read_fold_name = current_files[3]   # 0:score_ave.py, 1: center.py, 2: Average folder
 input_dir = os.path.join(code_path,read_fold_name)
 
