@@ -35,6 +35,7 @@ typedef struct tracker_point{
 enum class FRAME_STATE{
     first,
     second,
+    third,
     more
 };
 #endif
