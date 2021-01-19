@@ -1,4 +1,5 @@
 log/*
 cluster_score/2020*
+cluster_score/2021*
 cluster_score/Average/*.csv
 .vscode/*
