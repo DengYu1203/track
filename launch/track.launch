@@ -21,19 +21,22 @@
         <param name="output_transform_info" value="false"/>
         <param name="output_gt_pt_info"     value="false"/>
         <param name="output_score_mat_info" value="false"/>
-        <param name="write_out_score_file"  value="false"/>
+        <param name="write_out_score_file"  value="true"/>
         <param name="DA_method"             value="false"/>
-        <param name="use_KFT_module"        value="false"/>
+        <param name="use_KFT_module"        value="true"/>
         <param name="show_stopObj_id"       value="false"/>
         <param name="kft_id_num"            value="2"/>
         <param name="show_vel_marker"       value="true"/>
         <param name="use_ego_callback"      value="true"/>
         <param name="use_5_radar"           value="false"/>
         <param name="get_transformer"       value="true"/>
+        <!-- Set Cluster Algo and parameters -->
         <param name="cluster_type"          value="dbpda"/>
+        <param name="eps"                   value="2.2"/>
+        <param name="Nmin"                  value="2"/>
+        <param name="history_frames"        value="10"/>
         
         <param name="use_score_cluster"     value="true"/>
-        <param name="csv_name"              value="Eps-3.0_N-2_"/>
 
     <param name="use_sim_time" value="true"/>
 </launch>
