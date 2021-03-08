@@ -1,0 +1,36 @@
+<launch>
+    
+    <!-- <node pkg="radar_odometry"    type="radar_ego_motion" name="radar_ego_motion"/> -->
+        <!-- <param name="vel_threshold"    value="0.1"/> --> <!-- default value -->
+        <!-- <param name="vel_threshold"         value="0.2"/> -->
+        <!-- <param name="use_vel"               value="true"/> -->
+        <!-- <param name="compensate_inlier"     value="true"/> -->
+    
+
+    <node pkg="track"             type="radar_track_itri"      name="radar_track_itri"      output="screen"/>
+        <param name="output_KFT_result"     value="false"/>
+        <param name="output_obj_id_result"  value="false"/>
+        <param name="output_radar_info"     value="false"/>
+        <param name="output_cluster_info"   value="false"/>
+        <param name="output_dbscan_info"    value="false"/>
+        <param name="output_DA_pair"        value="false"/>
+        <param name="output_exe_time"       value="true"/>
+        <param name="output_label_info"     value="false"/>
+        <param name="output_ego_vel_info"   value="true"/>
+        <param name="output_transform_info" value="false"/>
+        <param name="output_gt_pt_info"     value="false"/>
+        <param name="DA_method"             value="false"/>
+        <param name="use_KFT_module"        value="true"/>
+        <param name="show_stopObj_id"       value="false"/>
+        <param name="kft_id_num"            value="2"/>
+        <param name="show_vel_marker"       value="true"/>
+        <param name="get_transformer"       value="true"/>
+        <!-- Set Cluster Algo and parameters -->
+        <param name="cluster_type"          value="dbpda"/>
+        <param name="eps"                   value="2.5"/>
+        <param name="Nmin"                  value="2"/>
+        <param name="history_frames"        value="10"/>
+        <param name="cluster_dt_weight"     value="2.0"/>
+        
+    <param name="use_sim_time" value="true"/>
+</launch>
