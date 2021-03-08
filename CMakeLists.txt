@@ -10,6 +10,7 @@ pcl_conversions
 roscpp
 cv_bridge
 conti_radar
+itri_msgs
 )
 find_package( OpenCV REQUIRED )
 
@@ -53,7 +54,19 @@ target_link_libraries(radar_track
   ${OpenCV_LIBRARIES}
 )
 
+add_executable(radar_track_itri
+   src/radar_track_itri.cpp
+   src/Hungarian.cpp
+   src/dbscan.cpp 
+   src/cluster_visual.cpp
+   src/dbpda.cpp)
 
-add_dependencies (combineSensor conti_radare_gencpp)
+target_link_libraries(radar_track_itri
+  ${catkin_LIBRARIES}
+  ${PCL_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+)
+
+# add_dependencies (combineSensor conti_radare_gencpp)
 
 
