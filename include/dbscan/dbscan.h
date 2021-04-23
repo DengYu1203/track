@@ -4,41 +4,10 @@
 #include <iostream>
 #include <vector>
 #include <Eigen/Dense>
+#include "cluster_struct/cluster_struct.h"
 
 using namespace std;
 
-#ifndef cluster_struct
-#define cluster_struct
-enum class MOTION_STATE{
-  move,
-  stop,
-  slow_down
-};
-
-typedef struct tracker_point{
-  float x;
-  float y;
-  float z;
-  float x_v;
-  float y_v;
-  float z_v;
-  float rcs;
-  double vel_ang;
-  double vel;
-  int id;
-  int scan_id;
-  int cluster_flag;
-  bool vistited;
-  MOTION_STATE motion;
-}cluster_point,kf_tracker_point;
-
-enum class FRAME_STATE{
-    first,
-    second,
-    third,
-    more
-};
-#endif
 
 // use the radar velocity to adjust the parameter(slow to fast)
 typedef struct multi_param{

@@ -3,7 +3,9 @@
 dbpda::dbpda(double eps, int Nmin){
     dbpda_param.eps = eps;
     dbpda_param.Nmin = Nmin;
+    dbpda_param.time_threshold = 3;
     history_frame_num = 4;
+    dt_threshold_vel = 0.0;
     points_history.clear();
     vel_scale = 1;
     input_cloud = pcl::PointCloud<pcl::PointXYZ>().makeShared();
@@ -14,13 +16,18 @@ dbpda::dbpda(double eps, int Nmin){
 
 dbpda::~dbpda(){}
 
+/* 
+ * Input: The current radar points 
+ * Output: The current radar cluster result
+ */
 std::vector< std::vector<cluster_point> > dbpda::cluster(std::vector<cluster_point> data){
     input_cloud->clear();
+    // input_cloud_time->clear();
     points_history.push_back(data);
     if(points_history.size()>history_frame_num){
         points_history.erase(points_history.begin());
     }
-    std::cout << "points_history size : " << points_history.size() << std::endl;
+    // std::cout << "points_history size : " << points_history.size() << std::endl;
     switch (points_history.size())
     {
     case 1:
@@ -43,7 +50,7 @@ std::vector< std::vector<cluster_point> > dbpda::cluster(std::vector<cluster_poi
             pcl::PointXYZ temp_pt;
             temp_pt.x = encode_centers.at(i).x;
             temp_pt.y = encode_centers.at(i).y;
-            temp_pt.z = encode_centers.at(i).vel * vel_scale;
+            temp_pt.z = vel_function(encode_centers.at(i).vel, scan_num - encode_centers.at(i).scan_time);
             input_cloud->points.push_back(temp_pt);
             process_data.push_back(encode_centers.at(i));
             // initial the reachable_dist
@@ -55,7 +62,7 @@ std::vector< std::vector<cluster_point> > dbpda::cluster(std::vector<cluster_poi
             pcl::PointXYZ temp_pt;
             temp_pt.x = data.at(i).x;
             temp_pt.y = data.at(i).y;
-            temp_pt.z = data.at(i).vel * vel_scale;
+            temp_pt.z = vel_function(data.at(i).vel, scan_num - data.at(i).scan_time);
             input_cloud->points.push_back(temp_pt);
             process_data.push_back(data.at(i));
             // initial the reachable_dist
@@ -70,7 +77,7 @@ std::vector< std::vector<cluster_point> > dbpda::cluster(std::vector<cluster_poi
                 pcl::PointXYZ temp_pt;
                 temp_pt.x = points_history.at(i).at(j).x;
                 temp_pt.y = points_history.at(i).at(j).y;
-                temp_pt.z = points_history.at(i).at(j).vel * vel_scale;
+                temp_pt.z = vel_function(points_history.at(i).at(j).vel, scan_num - points_history.at(i).at(j).scan_time);
                 input_cloud->points.push_back(temp_pt);
                 process_data.push_back(points_history.at(i).at(j));
                 // initial the reachable_dist
@@ -82,31 +89,33 @@ std::vector< std::vector<cluster_point> > dbpda::cluster(std::vector<cluster_poi
     }
     cluster_order.clear();
     cluster_order.shrink_to_fit();
+    std::cout << "Cluster points size : " << data.size() << "/" << process_data.size() << "(" << points_history.size() << " frames)" << std::endl;
     std::vector< std::vector<int> > final_cluster_order;
     
     // DBSCAN cluster
     for(int i=0;i<process_data.size();i++){
         // check if the pt has been visited
-        if(process_data.at(i).vistited)
+        if(process_data.at(i).visited)
             continue;
         else
-            process_data.at(i).vistited = true;
+            process_data.at(i).visited = true;
         std::vector<int> temp_cluster;
         
         // find neighbor and get the core distance
         cluster_queue.at(i).neighbor_info = find_neighbors(process_data.at(i));
         cluster_order.push_back(i);
         temp_cluster.push_back(i);
-        // satisfy the Nmin neighbors
+        // satisfy the Nmin neighbors (!= 0: find all cluster even the single point;>=Nmin : remove the noise)
         if(cluster_queue.at(i).neighbor_info.pointIdxNKNSearch.size() != 0){
             cluster_queue.at(i).core_dist = std::sqrt(*std::max_element(cluster_queue.at(i).neighbor_info.pointNKNSquaredDistance.begin(),
                                                      cluster_queue.at(i).neighbor_info.pointNKNSquaredDistance.end()));
             expand_neighbor(process_data, temp_cluster, i);
+            // final_cluster_order.push_back(temp_cluster); // filter out the outlier that only contains one point in one cluster
         }
         else{
             cluster_queue.at(i).core_dist = -1;      // undefined distance (not a core point)
         }
-        final_cluster_order.push_back(temp_cluster);
+        final_cluster_order.push_back(temp_cluster);    // push the cluster that contains only one point to the final cluster result
     }
     
     std::vector< std::vector<cluster_point> > cluster_result;
@@ -165,13 +174,14 @@ double mahalanobis_distance(Eigen::VectorXd v, cluster_filter cluster_kf){
 }
 
 dbpda_neighbor_info dbpda::find_neighbors(cluster_point p){
+    // k-d tree with x,y,vel
     pcl::KdTreeFLANN<pcl::PointXYZ> kdtree;
     kdtree.setInputCloud(input_cloud);
 
     pcl::PointXYZ search_pt;
     search_pt.x = p.x;
     search_pt.y = p.y;
-    search_pt.z = p.vel * vel_scale;
+    search_pt.z = vel_function(p.vel, scan_num - p.scan_time);
 
     // find the eps radius neighbors
     dbpda_neighbor_info info;
@@ -195,16 +205,54 @@ dbpda_neighbor_info dbpda::find_neighbors(cluster_point p){
             // }
         }
     }
+
+    // k-d tree with x,y,vel,time
+    // pcl::KdTreeFLANN<PointXYVT> kdtree_with_time;
+    // // pcl::KdTree<PointXYVT> kdtree_with_time;
+    // boost::shared_ptr< pcl::PointRepresentation<PointXYVT> > point_representation;
+    // kdtree_with_time.setPointRepresentation(point_representation);
+    // kdtree_with_time.setInputCloud(input_cloud_time);
+    // PointXYVT search_pt;
+    // search_pt.x = p.x;
+    // search_pt.y = p.y;
+    // search_pt.z = p.vel * vel_scale;
+    // search_pt.t = p.scan_time;
+    // // find the eps radius neighbors
+    // dbpda_neighbor_info info_with_time;
+    // info_with_time.search_radius = dbpda_param.eps;
+    // info_with_time.search_k = dbpda_param.Nmin;
+    // // find the eps neighbors
+    // if(kdtree_with_time.radiusSearch(search_pt,info_with_time.search_radius,info_with_time.pointIdxRadiusSearch,info_with_time.pointRadiusSquaredDistance) >= info_with_time.search_k){
+    //     // for (size_t i = 0; i < info_with_time.pointIdxRadiusSearch.size (); ++i){
+    //         // std::cout << "    "  <<   input_cloud->points[ info_with_time.pointIdxRadiusSearch[i] ].x 
+    //         //             << " " << input_cloud->points[ info_with_time.pointIdxRadiusSearch[i] ].y 
+    //         //             << " " << input_cloud->points[ info_with_time.pointIdxRadiusSearch[i] ].z 
+    //         //             << " (squared distance: " << info_with_time.pointRadiusSquaredDistance[i] << ")" << std::endl;
+    //         // }
+    //     // if the point has more than Nmin neighbors, find the min distance that contains only Nmin neighbors
+    //     if(kdtree_with_time.nearestKSearch(search_pt, info_with_time.search_k,info_with_time.pointIdxNKNSearch,info_with_time.pointNKNSquaredDistance)>0){
+    //         // for (size_t i = 0; i < info_with_time.pointIdxNKNSearch.size (); ++i){
+    //         //     std::cout << "    "  <<   input_cloud->points[ info_with_time.pointIdxNKNSearch[i] ].x 
+    //         //                 << " " << input_cloud->points[ info_with_time.pointIdxNKNSearch[i] ].y 
+    //         //                 << " " << input_cloud->points[ info_with_time.pointIdxNKNSearch[i] ].z 
+    //         //                 << " (squared distance: " << info_with_time.pointNKNSquaredDistance[i] << ")" << std::endl;
+    //         // }
+    //     }
+    // }
+
     return info;
 }
 
 void dbpda::expand_neighbor(std::vector< cluster_point > &process_data, std::vector<int> &temp_cluster, int core_index){
     for(int i=0;i<cluster_queue.at(core_index).neighbor_info.pointIdxRadiusSearch.size();i++){
         int neighbor_index = cluster_queue.at(core_index).neighbor_info.pointIdxRadiusSearch.at(i);
-        if(process_data.at(neighbor_index).vistited)
+        if(process_data.at(neighbor_index).visited)
+            continue;
+        // set the time stamp threshold
+        else if(std::abs(process_data.at(core_index).scan_time-process_data.at(neighbor_index).scan_time)>dbpda_param.time_threshold)
             continue;
         else
-            process_data.at(neighbor_index).vistited = true;
+            process_data.at(neighbor_index).visited = true;
         temp_cluster.push_back(neighbor_index);
         cluster_queue.at(neighbor_index).neighbor_info = find_neighbors(process_data.at(neighbor_index));
         if(cluster_queue.at(neighbor_index).neighbor_info.pointIdxNKNSearch.size() != 0){
@@ -221,22 +269,26 @@ void dbpda::expand_neighbor(std::vector< cluster_point > &process_data, std::vec
 std::vector<int> dbpda::split_past(std::vector< cluster_point > process_data, std::vector< std::vector<int> > &final_cluster_order){
     std::vector<int> current_order;
     for(int i=0;i<cluster_order.size();i++){
-        if(process_data.at(cluster_order.at(i)).scan_id == scan_num){
+        if(process_data.at(cluster_order.at(i)).scan_time == scan_num){
             current_order.push_back(cluster_order.at(i));
         }
     }
+    // record the cluster result with past data
+    cluster_with_history.clear();
     // get the history data with time series
     std::vector< std::vector< std::vector<cluster_point> > > points_cluster_vec;    // contains the cluster result with all datas(need current data)
     std::vector< std::vector< std::vector<cluster_point> > > past_points_cluster_vec;   // the cluster result that only contain past data
     for(int i=0;i<final_cluster_order.size();i++){
         std::vector< std::vector<cluster_point> > temp_past_data(history_frame_num);
+        std::vector< cluster_point> temp_past_cluster;
         int past_scan_id_count = 0;
         for(int j=0;j<final_cluster_order.at(i).size();j++){
-            int past_timestamp = process_data.at(final_cluster_order.at(i).at(j)).scan_id;
+            int past_timestamp = process_data.at(final_cluster_order.at(i).at(j)).scan_time;
             if(past_timestamp != scan_num){
                 past_scan_id_count++;
             }
             temp_past_data.at(history_frame_num-1-(scan_num-past_timestamp)).push_back(process_data.at(final_cluster_order.at(i).at(j)));
+            temp_past_cluster.push_back(process_data.at(final_cluster_order.at(i).at(j)));
         }
         if(past_scan_id_count != final_cluster_order.at(i).size()){
             points_cluster_vec.push_back(temp_past_data);
@@ -244,6 +296,7 @@ std::vector<int> dbpda::split_past(std::vector< cluster_point > process_data, st
         else{
             past_points_cluster_vec.push_back(temp_past_data);
         }
+        cluster_with_history.push_back(temp_past_cluster);
     }
     points_cluster_vec.insert(points_cluster_vec.end(),past_points_cluster_vec.begin(),past_points_cluster_vec.end());
     history_points_with_cluster_order.clear();
@@ -253,7 +306,7 @@ std::vector<int> dbpda::split_past(std::vector< cluster_point > process_data, st
     for(std::vector< std::vector<int> >::iterator it=final_cluster_order.begin();it != final_cluster_order.end();){
         int count = 0;
         for(int i=0;i<(*it).size();i++){
-            if(process_data.at((*it).at(i)).scan_id != scan_num)
+            if(process_data.at((*it).at(i)).scan_time != scan_num)
                 count ++;
         }
         if(count == (*it).size()){
@@ -267,7 +320,7 @@ std::vector<int> dbpda::split_past(std::vector< cluster_point > process_data, st
     for(int i=0;i<final_cluster_order.size();i++){
         std::vector<int> temp;
         for(int j=0;j<final_cluster_order.at(i).size();j++){
-            if(process_data.at(final_cluster_order.at(i).at(j)).scan_id == scan_num){
+            if(process_data.at(final_cluster_order.at(i).at(j)).scan_time == scan_num){
                 temp.push_back(final_cluster_order.at(i).at(j));
             }
         }
@@ -276,6 +329,10 @@ std::vector<int> dbpda::split_past(std::vector< cluster_point > process_data, st
     }
     final_cluster_order = temp_final_list;
     return current_order;
+}
+
+std::vector< std::vector<cluster_point> > dbpda::cluster_with_past(){
+    return cluster_with_history;
 }
 
 void dbpda::cluster_center(std::vector< std::vector<cluster_point> > cluster_list){
@@ -304,12 +361,17 @@ void dbpda::cluster_center(std::vector< std::vector<cluster_point> > cluster_lis
         pt.x_v /= cluster_list.at(cluster_idx).size();
         pt.y_v /= cluster_list.at(cluster_idx).size();
         pt.z_v /= cluster_list.at(cluster_idx).size();
-        pt.cluster_flag = cluster_idx;
+        pt.cluster_id = cluster_idx;
         pt.vel = sqrt(pt.x_v*pt.x_v+pt.y_v*pt.y_v+pt.z_v*pt.z_v);
         center.push_back(pt);
 
     }
     final_center = center;
+}
+
+double dbpda::vel_function(double vel, int frame_diff){
+    // return vel_scale * vel * (dt_threshold_vel / history_frame_num * frame_diff + 1);
+    return vel_scale * vel;
 }
 
 std::vector<cluster_point> dbpda::get_center(void){
@@ -332,10 +394,11 @@ std::vector< std::vector< std::vector<cluster_point> > > dbpda::get_history_poin
     return history_points_with_cluster_order;
 }
 
-void dbpda::set_parameter(double eps, int Nmin, int frames_num){
+void dbpda::set_parameter(double eps, int Nmin, int frames_num, double dt_weight){
     dbpda_param.eps = eps;
     dbpda_param.Nmin = Nmin;
     history_frame_num = frames_num;
+    dt_threshold_vel = dt_weight;
 }
 
 void dbpda::kalman_filter_init(std::vector<cluster_point> cluster_list, int init_index){
@@ -398,8 +461,8 @@ void dbpda::kalman_association(std::vector< cluster_point > process_data, std::v
         std::vector<cluster_point> temp_list;
         // cluster_point past_kf;
         for(int j=0;j<final_cluster_order.at(i).size();j++){
-            if(process_data.at(final_cluster_order.at(i).at(j)).cluster_flag != -1){
-                past_kalman_id = process_data.at(final_cluster_order.at(i).at(j)).cluster_flag;
+            if(process_data.at(final_cluster_order.at(i).at(j)).cluster_id != -1){
+                past_kalman_id = process_data.at(final_cluster_order.at(i).at(j)).cluster_id;
                 // past_kf = process_data.at(final_cluster_order.at(i).at(j));
             }
             else{
@@ -479,13 +542,13 @@ std::vector<cluster_point> dbpda::time_encode(){
         temp.x_v = cluster_past.at(i).pred_state(2);
         temp.y_v = cluster_past.at(i).pred_state(3);
         temp.vel = Eigen::Vector2d(temp.x_v,temp.y_v).norm();
-        temp.vistited = false;
-        temp.scan_id = scan_num-1;
-        temp.cluster_flag = cluster_past.at(i).cluster_id;  // assign the past cluster id
+        temp.visited = false;
+        temp.scan_time = scan_num-1;
+        temp.cluster_id = cluster_past.at(i).cluster_id;  // assign the past cluster id
         encode_centers.push_back(temp);
         if(show_kf_info){
             std::cout << "============================================\n";
-            std::cout << "Cluster KF @" << i << " with id:" << temp.cluster_flag << std::endl;
+            std::cout << "Cluster KF @" << i << " with id:" << temp.cluster_id << std::endl;
             std::cout << "Pos: (" << temp.x << ", " << temp.y
                       << "), Vel: " << temp.vel << "(" << temp.x_v << ", " << temp.y_v << ")\n";
         }

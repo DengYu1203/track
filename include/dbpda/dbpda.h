@@ -9,61 +9,74 @@
 #include <algorithm>
 #include <queue>
 
+#include "cluster_struct/cluster_struct.h"
+
 // pcl for kdtree
 #include <pcl/point_types.h>
+#include <pcl/point_cloud.h>
 #include <pcl/kdtree/kdtree_flann.h>
-#include <pcl/point_types.h>
+#include <pcl/point_representation.h>
+
 
 // opencv for tracking
 #include <cv_bridge/cv_bridge.h>
 #include <opencv-3.3.1-dev/opencv2/core.hpp>
 #include <opencv-3.3.1-dev/opencv2/core/eigen.hpp>
 #include <opencv-3.3.1-dev/opencv2/highgui.hpp>
-// #include <opencv-3.3.1-dev/opencv2/imgproc.hpp>
-// #include <opencv-3.3.1-dev/opencv2/calib3d.hpp>
 #include <opencv-3.3.1-dev/opencv2/opencv.hpp>
 
 using namespace std;
 
-#ifndef cluster_struct
-#define cluster_struct
-enum class MOTION_STATE{
-  move,
-  stop,
-  slow_down
-};
 
-typedef struct tracker_point{
-  float x;
-  float y;
-  float z;
-  float x_v;
-  float y_v;
-  float z_v;
-  float rcs;
-  double vel_ang;
-  double vel;
-  int id;
-  int scan_id;
-  int cluster_flag;
-  bool vistited;
-  MOTION_STATE motion;
-}cluster_point,kf_tracker_point;
+#ifndef kdtree_point_presentation
+#define kdtree_point_presentation
+struct PointXYVT
+{
+    PCL_ADD_POINT4D;
+    // union
+    // {
+    //   float coordinate[3];
+    //   struct
+    //   {
+    //     float x;
+    //     float y;
+    //     float z;
+    //   };
+    // };
+    float t;
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+} EIGEN_ALIGN16;
+POINT_CLOUD_REGISTER_POINT_STRUCT(PointXYVT,
+                                    (float, x, x)
+                                    (float, y, y)
+                                    (float, z, z)
+                                    (float, t, t)
+)
+// class cluster_kdtree : pcl::PointRepresentation<PointXYVT>
+// {
+//     using pcl::PointRepresentation<PointXYVT>::nr_dimensions_;
+//     private:
+//         /* data */
+//     public:
+//         cluster_kdtree(){
+//             nr_dimensions_ = 4;
+//         }
+//         virtual void copyToFloatArray(const PointXYVT &p, float *out) const{
+//             out[0] = p.x;
+//             out[1] = p.y;
+//             out[2] = p.z;
+//             out[4] = p.t;
+//         }
+//         // virtual void vectorize(const PointXYVT &p, float *out) const{
+//         //     out[0] = p.x;
+//         //     out[1] = p.y;
+//         //     out[2] = p.z;
+//         //     out[4] = p.t;
+//         // }
+// };
 
-enum class FRAME_STATE{
-    first,
-    second,
-    third,
-    more
-};
+
 #endif
-
-enum class CLUSTER_STATE{
-  missing,    // once no matching
-  tracking,   // tracking more than 2 frames
-  unstable    // first frame tracker
-};
-
 
 
 typedef struct kalman_filter{
@@ -96,19 +109,22 @@ typedef struct dbpda_info
 
 typedef struct dbpda_parameter
 {
-    double eps;
-    int Nmin;
+  double eps;
+  int Nmin;
+  int time_threshold;
 }dbpda_para;
 
 class dbpda
 {
     private:
         std::vector< std::vector<cluster_point> > points_history;   // points (t, t-1, t-2), past points(including current scan)
+        std::vector< std::vector<cluster_point> > cluster_with_history;   // cluster result with past points(including current scan)
         std::vector< dbpda_info > cluster_queue;                    // the queue of the current scan data info
         std::vector< int > cluster_order;                           // record the cluster result(contains current and past data)
         std::vector<cluster_point> final_center;                    // get the cluster center
         std::vector< std::vector< std::vector<cluster_point> > > history_points_with_cluster_order; // the vector ->  cluster order(time order(data))
         pcl::PointCloud<pcl::PointXYZ>::Ptr input_cloud;            // used for kd-tree
+        // pcl::PointCloud<PointXYVT>::Ptr input_cloud_time;              // used for kd-tree with time
         dbpda_para dbpda_param; // the parameter of the DBPDA Algorithm
         int history_frame_num;  // the frame numbers that decide to use
         double vel_scale;
@@ -119,6 +135,7 @@ class dbpda
         double mahalanobis_distance(Eigen::VectorXd v, cluster_filter cluster_kf);
         std::vector<int> split_past(std::vector< cluster_point > process_data, std::vector< std::vector<int> > &final_cluster_order);
         void cluster_center(std::vector< std::vector<cluster_point> > cluster_list);
+        double vel_function(double vel, int frame_diff);
         
         int stateDim = 4;   // kalman filter state : [x,y,vx,vy]
         int measureDim = 4; // [x,y]
@@ -134,12 +151,14 @@ class dbpda
         dbpda(double eps=2.5, int Nmin=2);
         ~dbpda();
         std::vector< std::vector<cluster_point> > cluster(std::vector<cluster_point> data);
+        std::vector< std::vector<cluster_point> > cluster_with_past();
         std::vector<cluster_point> get_center(void);
         std::vector<cluster_point> get_history_points(void);
         std::vector< std::vector< std::vector<cluster_point> > > get_history_points_with_cluster_order(void);
-        void set_parameter(double eps, int Nmin, int frames_num);
+        void set_parameter(double eps, int Nmin, int frames_num, double dt_weight);
         int scan_num;
         double data_period;
+        double dt_threshold_vel;  // use for the vel_function to decide the vel weight with scan difference
         bool output_info;       // decide to print the dbscan output information or not
         bool show_kf_info;
         bool use_kf;

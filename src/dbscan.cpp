@@ -105,9 +105,9 @@ std::vector< std::vector<cluster_point> > dbscan::cluster(std::vector<cluster_po
     param.eps[3] = 2.5;
     param.MinPts[3] = 2;
     for(int i=0;i<points.size();i++){
-        if(points.at(i).vistited && cluster_idx.at(i)!=-1)
+        if(points.at(i).visited && cluster_idx.at(i)!=-1)
             continue;
-        points.at(i).vistited = true;
+        points.at(i).visited = true;
         cluster_point core_pt = points.at(i);
         int core_level = decide_vel_level_test(core_pt.vel);
         // double Nmin = (core_pt.vel > data_vel.ave ? 1 : 3);
@@ -125,7 +125,7 @@ std::vector< std::vector<cluster_point> > dbscan::cluster(std::vector<cluster_po
         if(cluster_idx.at(j)!=-1)
             cluster_list.at(cluster_idx.at(j)).push_back(points.at(j));
         else{
-            if(points.at(j).scan_id != scan_num)
+            if(points.at(j).scan_time != scan_num)
                 continue;
             std::vector<cluster_point> non_cluster_temp;
             non_cluster_temp.push_back(points.at(j));
@@ -247,9 +247,9 @@ std::vector<int> dbscan::find_neighbor(cluster_point pt, int vel_level){
 
 void dbscan::expand_neighbor(std::vector<int> neighbor){
     for(int i=0;i<neighbor.size();i++){
-        if(points.at(neighbor.at(i)).vistited)
+        if(points.at(neighbor.at(i)).visited)
             continue;
-        points.at(neighbor.at(i)).vistited = true;
+        points.at(neighbor.at(i)).visited = true;
         cluster_point n_pt = points.at(neighbor.at(i));
         int n_pt_level;
         double Nmin;
@@ -314,8 +314,8 @@ std::vector<cluster_point> dbscan::delist(std::vector< std::vector<cluster_point
         for(int j=0;j<cluster_l.at(i).size();j++){
             cluster_point pt;
             pt = cluster_l.at(i).at(j);
-            pt.cluster_flag = -1;
-            pt.vistited = false;
+            pt.cluster_id = -1;
+            pt.visited = false;
             output_list.push_back(pt);
         }
     }
@@ -353,7 +353,7 @@ void dbscan::cluster_center(std::vector< std::vector<cluster_point> > cluster_li
         pt.x_v /= cluster_list.at(cluster_idx).size();
         pt.y_v /= cluster_list.at(cluster_idx).size();
         pt.z_v /= cluster_list.at(cluster_idx).size();
-        pt.cluster_flag = cluster_idx;
+        pt.cluster_id = cluster_idx;
         pt.vel = sqrt(pt.x_v*pt.x_v+pt.y_v*pt.y_v+pt.z_v*pt.z_v);
         center.push_back(pt);
 
@@ -466,7 +466,7 @@ void dbscan::split(std::vector< std::vector<cluster_point> > &cluster_list){
     for(int i=0;i<cluster_list.size();i++){
         std::vector<cluster_point> temp;
         for(int j = 0;j<cluster_list.at(i).size();j++){
-            if(cluster_list.at(i).at(j).scan_id == scan_num){
+            if(cluster_list.at(i).at(j).scan_time == scan_num){
                 temp.push_back(cluster_list.at(i).at(j));
             }
         }
@@ -481,7 +481,7 @@ void dbscan::remove(std::vector< std::vector<cluster_point> > &cluster_list){
     for(std::vector< std::vector<cluster_point> >::iterator it=cluster_list.begin();it != cluster_list.end();){
         int count = 0;
         for(int i=0;i<(*it).size();i++){
-            if((*it).at(i).scan_id != scan_num)
+            if((*it).at(i).scan_time != scan_num)
                 count ++;
         }
         if(count == (*it).size()){
