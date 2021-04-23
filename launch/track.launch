@@ -16,27 +16,31 @@
         <param name="output_DA_pair"        value="false"/>
         <param name="output_exe_time"       value="true"/>
         <param name="output_label_info"     value="false"/>
-        <param name="output_score_info"     value="false"/>
         <param name="output_ego_vel_info"   value="false"/>
         <param name="output_transform_info" value="false"/>
         <param name="output_gt_pt_info"     value="false"/>
-        <param name="output_score_mat_info" value="false"/>
-        <param name="write_out_score_file"  value="true"/>
         <param name="DA_method"             value="false"/>
         <param name="use_KFT_module"        value="true"/>
         <param name="show_stopObj_id"       value="false"/>
         <param name="kft_id_num"            value="2"/>
         <param name="show_vel_marker"       value="true"/>
-        <param name="use_ego_callback"      value="true"/>
+        <param name="use_ego_callback"      value="false"/>
         <param name="use_5_radar"           value="false"/>
         <param name="get_transformer"       value="true"/>
         <!-- Set Cluster Algo and parameters -->
-        <param name="cluster_type"          value="dbpda"/>
-        <param name="eps"                   value="2.2"/>
+        <param name="cluster_type"          value="dbtrack"/>
+        <!-- <param name="eps"                   value="1.8"/> -->
+        <param name="eps"                   value="1.6"/>
         <param name="Nmin"                  value="2"/>
         <param name="history_frames"        value="10"/>
+        <param name="cluster_dt_weight"     value="1.5"/>
+        <param name="viz_cluster_with_past" value="true"/>
         
+        <!-- Cluster Score -->
+        <param name="write_out_score_file"  value="false"/>
         <param name="use_score_cluster"     value="true"/>
+        <param name="output_score_info"     value="false"/>
+        <param name="output_score_mat_info" value="false"/>
 
     <param name="use_sim_time" value="true"/>
 </launch>
