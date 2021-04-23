@@ -2068,10 +2068,10 @@ void callback(const itri_msgs::Ars40xObjectsConstPtr& msg, const itri_msgs::CarS
       c.z_v = 0;
       c.vel_ang = angle;
       c.vel = velocity;
-      c.cluster_flag = -1;  // -1: not clustered
-      c.vistited = false;
+      c.cluster_id = -1;  // -1: not clustered
+      c.visited = false;
       c.id = radar_id_count++;
-      c.scan_id = call_back_num;
+      c.scan_time = call_back_num;
       c.rcs = msg->objs[i].radar_cross_section;
       
       pcl::PointXYZI pt;
