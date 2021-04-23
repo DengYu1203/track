@@ -61,5 +61,6 @@
         "valarray": "cpp",
         "*.ipp": "cpp"
     },
-    "cmake.configureOnOpen": false
+    "cmake.configureOnOpen": false,
+    "editor.tabSize": 2
 }
