@@ -1,0 +1,5 @@
+<launch>
+  <node pkg="track" type="change_frame_id.py" name="change_frame_id" output="screen"/>
+  <param name="input_bag" value="/data2/nuScenes/bag_test/"/>
+  <param name="output_bag" value="/data2/nuScenes/remove_slash_bag"/>
+</launch>
