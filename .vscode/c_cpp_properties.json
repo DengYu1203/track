@@ -18,7 +18,9 @@
                 "/home/user/deng/catkin_deng/src/track/include/**",
                 "/home/user/deng/catkin_deng/src/conti_radar/**",
                 "/usr/include/**",
-                "/usr/src/**"
+                "/usr/src/**",
+                "${workspaceFolder}/include",
+                "/usr/include/eigen3"
             ],
             "name": "ROS",
             "intelliSenseMode": "gcc-x64",

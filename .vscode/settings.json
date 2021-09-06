@@ -62,5 +62,8 @@
         "*.ipp": "cpp"
     },
     "cmake.configureOnOpen": false,
-    "editor.tabSize": 2
+    "editor.tabSize": 2,
+    "python.analysis.extraPaths": [
+        "/opt/ros/kinetic/lib/python2.7/dist-packages"
+    ]
 }
