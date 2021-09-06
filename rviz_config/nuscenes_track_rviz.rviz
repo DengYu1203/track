@@ -18,7 +18,7 @@ Panels:
     Experimental: false
     Name: Time
     SyncMode: 0
-    SyncSource: ""
+    SyncSource: Image_front_left
   - Class: rviz/Displays
     Help Height: 0
     Name: Displays
@@ -54,13 +54,44 @@ Visualization Manager:
       Frame Timeout: 300
       Frames:
         All Enabled: true
+        car:
+          Value: true
+        lidar_label:
+          Value: true
+        map:
+          Value: true
+        nuscenes_cam_back:
+          Value: true
+        nuscenes_cam_back_left:
+          Value: true
+        nuscenes_cam_back_right:
+          Value: true
+        nuscenes_cam_front:
+          Value: true
+        nuscenes_cam_front_left:
+          Value: true
+        nuscenes_cam_front_right:
+          Value: true
+        nuscenes_lidar:
+          Value: true
+        nuscenes_radar_back_left:
+          Value: true
+        nuscenes_radar_back_right:
+          Value: true
+        nuscenes_radar_front:
+          Value: true
+        nuscenes_radar_front_left:
+          Value: true
+        nuscenes_radar_front_right:
+          Value: true
       Marker Scale: 1
       Name: TF
       Show Arrows: true
       Show Axes: true
       Show Names: true
       Tree:
-        {}
+        car:
+          {}
       Update Interval: 0
       Value: true
     - Class: rviz/Axes
@@ -96,12 +127,28 @@ Visualization Manager:
       Value: false
     - Class: rviz/MarkerArray
       Enabled: true
+      Marker Topic: /annotation_vel
+      Name: anno_vel
+      Namespaces:
+        {}
+      Queue Size: 100
+      Value: true
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: /radar_rls_v
+      Name: rls_vel
+      Namespaces:
+        {}
+      Queue Size: 100
+      Value: true
+    - Class: rviz/MarkerArray
+      Enabled: false
       Marker Topic: /radar_tracking_v
       Name: tracking vel
       Namespaces:
         {}
       Queue Size: 100
-      Value: true
+      Value: false
     - Class: rviz/MarkerArray
       Enabled: false
       Marker Topic: /radar_front_v
@@ -142,6 +189,14 @@ Visualization Manager:
         {}
       Queue Size: 100
       Value: false
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: /annotation_trajectory_path
+      Name: anno_path
+      Namespaces:
+        {}
+      Queue Size: 100
+      Value: true
     - Class: rviz/MarkerArray
       Enabled: true
       Marker Topic: /tracking_smooth_trajectory
