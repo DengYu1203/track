@@ -3,6 +3,7 @@
 #define MOTION_OPT_MSG(msg) if(output_motion_eq_optimizer_msg) {std::cout << "[Motion eq Optimizer] " << msg << std::endl;}
 #define CLUSTER_TRACK_MSG(msg) if (output_cluster_track_msg) {std::cout << "\033[34m" << msg << "\033[0m";}
 #define CLUSTER_TRACK_MSG_BOLD(msg) if (output_cluster_track_msg) {std::cout << "\033[1;34m" << msg << "\033[0m";}
+#define RLS_MSG(msg) if (RLS_msg_flag) {std::cout << "[RLS]" << msg;}
 #define keep_cluster_id_frame 5
 #define assign_cluster_id_weight 0.8  // decide the percentage of the unclustered points
 #define noise_point_frame 2   // the point that is not clustered over this number would be removed from the points_history vec
@@ -16,7 +17,6 @@ dbtrack::dbtrack(double eps, int Nmin){
   points_history.clear();
   vel_scale = 1;
   input_cloud = pcl::PointCloud<pcl::PointXYZ>().makeShared();
-  output_info = true;
 }
 
 dbtrack::~dbtrack(){}
@@ -50,6 +50,32 @@ std::vector< std::vector<cluster_point> > dbtrack::cluster(std::vector<cluster_p
       cluster_queue.push_back(cluster_pt);
     }
   }
+  tracker_core_begin_index = process_data.size();
+  if(tracker_core_flag && tracker_cores.size()>0){
+    std::cout << "Tracker core index: " << tracker_core_begin_index << std::endl;
+    for(auto core=tracker_cores.begin();core!=tracker_cores.end();core++){
+      if(core->second.hitsory.size()<5)
+        continue;
+      pcl::PointXYZ temp_pt;
+      temp_pt.x = core->second.point.x;
+      temp_pt.y = core->second.point.y;
+      temp_pt.z = vel_function(core->second.point.vel, scan_num - core->second.point.scan_time);
+      input_cloud->points.push_back(temp_pt);
+      process_data.push_back(core->second.point);
+      // initialize the reachable_dist
+      dbtrack_info cluster_pt;
+      cluster_pt.reachable_dist = -1; // undefined distance
+      cluster_queue.push_back(cluster_pt);
+      std::cout << "Add Tracking Core point:(" << core->second.point.x << ", "
+                                               << core->second.point.y << ")";
+      std::cout << "\tVelocity: " << core->second.point.vel;
+      std::cout << "\tTracking ID: " << core->first << ", hit: " << core->second.hitsory.size() << std::endl;
+    }
+  }
+
+
+
+
   
   // Set the kd-tree input
   kdtree.setInputCloud(input_cloud);
@@ -116,6 +142,8 @@ void dbtrack::cluster_track(std::vector< cluster_point > process_data, std::vect
     // CLUSTER_TRACK_MSG("Searching process data" << std::endl);
     for(int element_idx=0;element_idx<final_cluster_order.at(cluster_idx).size();element_idx++){
       int data_idx = final_cluster_order.at(cluster_idx).at(element_idx); // get the cluster element index
+      if(tracker_core_flag && (data_idx>=tracker_core_begin_index))
+        continue;
       int time_diff = scan_num - process_data.at(data_idx).scan_time;     // calculate the time layer of the element
       points_history.at(points_history_size-time_diff-1).at(process_data.at(data_idx).id).current_cluster_order = cluster_idx;
       cluster_id_map[points_history.at(points_history_size-time_diff-1).at(process_data.at(data_idx).id).cluster_id].push_back(&points_history.at(points_history_size-time_diff-1).at(process_data.at(data_idx).id));
@@ -199,6 +227,10 @@ void dbtrack::cluster_track(std::vector< cluster_point > process_data, std::vect
   merge_cluster(cluster_result_ptr);
   MOTION_OPT_MSG("Ready to Optimizer!");
   motion_equation_optimizer(cluster_result_ptr);
+  tracking_id_adjust();
+  // use the RLS velocity estimation to get the tracker velocity
+  if(use_RLS)
+    updateTrackerVelocity(cluster_based_on_now, final_cluster_idx);
 }
 
 void dbtrack::merge_cluster(std::map<int,std::vector<cluster_point*>> cluster_result_ptr){
@@ -265,8 +297,6 @@ void dbtrack::merge_cluster(std::map<int,std::vector<cluster_point*>> cluster_re
 }
 
 void dbtrack::motion_equation_optimizer(std::map<int,std::vector<cluster_point*>> cluster_result_ptr){
-  std::vector<regression_line> motion_eq;
-  
   /* Optimizer parameter
    * Use the iterator num to limit the gradient size
    */
@@ -347,28 +377,17 @@ void dbtrack::motion_equation_optimizer(std::map<int,std::vector<cluster_point*>
       }
     }
   }
-
-  // motion_model_center.clear();
-  // motion_model_center.shrink_to_fit();
-  // for(int i=0;i<motion_eq.size();i++){
-  //   cluster_point temp_data;
-  //   regression_line line_para = motion_eq.at(i);
-  //   temp_data.cluster_id = final_cluster_idx.at(i);
-  //   temp_data.x = line_para.x1*history_frame_num*history_frame_num + line_para.x2*history_frame_num + line_para.x3;
-  //   temp_data.y = line_para.y1*history_frame_num*history_frame_num + line_para.y2*history_frame_num + line_para.y3;
-  //   temp_data.z = 0;
-  //   temp_data.x_v = (2*line_para.x1*history_frame_num + line_para.x2)*data_period;
-  //   temp_data.y_v = (2*line_para.y1*history_frame_num + line_para.y2)*data_period;
-  //   temp_data.z_v = 0;
-  //   temp_data.vel = std::sqrt(temp_data.x_v*temp_data.x_v+temp_data.y_v*temp_data.y_v+temp_data.z_v*temp_data.z_v);
-  //   motion_model_center.push_back(temp_data);
-  // }
 }
 
 int dbtrack::voting_id(std::map<int,std::vector<cluster_point*>> &cluster_result_ptr, std::map<int,std::vector<cluster_point*>> cluster_id_map, int cluster_size){
   int assign_cluster_id = -1;
+  bool output_cluster_track_msg_latch = output_cluster_track_msg;
+  if(cluster_size==1)
+    output_cluster_track_msg = false;
   std::map<int,std::vector<double>> voting_list;  // id, weight list
+  int new_born_count = 0;
   for(auto data_idx=cluster_id_map.begin();data_idx!=cluster_id_map.end();data_idx++){
+    // CLUSTER_TRACK_MSG_BOLD("Cluster ID Map -> "<<(*data_idx).first<<"\n");
     for(auto it=(*data_idx).second.begin();it!=(*data_idx).second.end();it++){
       if((*it)->tracking_history.size()>0){
         int count_ = std::count((*it)->tracking_history.begin(),(*it)->tracking_history.end(),(*it)->tracking_history.back());
@@ -389,19 +408,33 @@ int dbtrack::voting_id(std::map<int,std::vector<cluster_point*>> &cluster_result
         }
         CLUSTER_TRACK_MSG(std::endl);
       }
-      
+      else{
+        new_born_count++;
+      }
     }
   }
+  
   CLUSTER_TRACK_MSG("------------------------------------\n");
   double max_voting_result = -1;
   int max_voting_size = -1;
+  double voting_size_base;
+  if(voting_list.size()>0){
+    voting_size_base = (double)(cluster_size-new_born_count)/(voting_list.size()+0.5);
+    CLUSTER_TRACK_MSG("Voting Size Base: "<<voting_size_base<<"\n");
+  }
   std::vector<int> multiple_voting_;  // record the cluster id that voting size are larger than setting(10)
   for(auto vi=voting_list.begin();vi!=voting_list.end();vi++){
     int voting_size = (*vi).second.size();
-    if(voting_size>10){
+    // if(voting_size>10){
+    if(voting_size>=voting_size_base){
       multiple_voting_.push_back((*vi).first);
     }
     double voting_w = (double)std::accumulate((*vi).second.begin(),(*vi).second.end(),0.0)/voting_size;
+    if(tracking_id_history_map.find(vi->first)!=tracking_id_history_map.end()){
+      voting_w *= tracking_id_history_map[vi->first].size();
+      CLUSTER_TRACK_MSG("Tracking hit: "<<tracking_id_history_map[vi->first].size()<<"-> ");
+    }
+    // double voting_w = (double)std::accumulate((*vi).second.begin(),(*vi).second.end(),0.0);
     if((max_voting_result<voting_w) || ((max_voting_result==voting_w) && (max_voting_size<voting_size))){
       assign_cluster_id = (*vi).first;
       max_voting_result = voting_w;
@@ -417,7 +450,7 @@ int dbtrack::voting_id(std::map<int,std::vector<cluster_point*>> &cluster_result
     CLUSTER_TRACK_MSG("==============================================\n");
 
     // assign cluster id
-    CLUSTER_TRACK_MSG_BOLD("Clsuter idx: " << assign_cluster_id << "(" << cluster_size << ")\n\n");
+    CLUSTER_TRACK_MSG_BOLD("Clsuter idx: " << assign_cluster_id << "(old:" << cluster_size-new_born_count << "/new:" << new_born_count << ")\n\n");
     for(auto data_idx=cluster_id_map.begin();data_idx!=cluster_id_map.end();data_idx++){
       for(auto it=(*data_idx).second.begin();it!=(*data_idx).second.end();it++){
         (*it)->cluster_id = assign_cluster_id;
@@ -441,7 +474,14 @@ int dbtrack::voting_id(std::map<int,std::vector<cluster_point*>> &cluster_result
     }
   }
   else{
-    CLUSTER_TRACK_MSG_BOLD("Find multiple clusters!\n");
+    CLUSTER_TRACK_MSG_BOLD("\nFind multiple clusters!(old:" << cluster_size-new_born_count << "/new:" << new_born_count << ")\n");
+    if(output_cluster_track_msg){
+      CLUSTER_TRACK_MSG_BOLD("->");
+      for(int i=0;i<multiple_voting_.size();i++){
+        CLUSTER_TRACK_MSG_BOLD(" "<<multiple_voting_.at(i));
+      }
+      CLUSTER_TRACK_MSG_BOLD("\n\n");
+    }
     std::vector<cluster_point *> child_pts;
     std::vector<cluster_point> voting_center(multiple_voting_.size());
     std::vector<int> voting_size(multiple_voting_.size());
@@ -498,11 +538,233 @@ int dbtrack::voting_id(std::map<int,std::vector<cluster_point*>> &cluster_result
       }
     }
   }
+  output_cluster_track_msg = output_cluster_track_msg_latch;
   return assign_cluster_id;
+}
+
+/*
+ * Add the core points to improve the DBSCAN cluster
+ * Record the tracking hit to provide the weights for the clsuter voting
+ */
+void dbtrack::tracking_id_adjust(){
+  int count_idx = 0;
+  for(auto id=final_cluster_idx.begin();id!=final_cluster_idx.end();id++,count_idx++){
+    tracking_id_history_map[*id].push_back(scan_num);
+    if(tracker_core_flag || use_RLS){
+      cluster_point tracker_core_obj;
+      tracker_core_obj.x = final_center[count_idx].x;
+      tracker_core_obj.y = final_center[count_idx].y;
+      tracker_core_obj.z = final_center[count_idx].z;
+      tracker_core_obj.x_v = final_center[count_idx].x_v;
+      tracker_core_obj.y_v = final_center[count_idx].y_v;
+      tracker_core_obj.z_v = 0;
+      tracker_core_obj.vel = final_center[count_idx].vel;
+      tracker_core_obj.cluster_id = *id;
+      tracker_core_obj.scan_time = scan_num;
+      tracker_core_obj.visited = false;
+      Eigen::Vector3d temp_center;
+      temp_center << tracker_core_obj.x , tracker_core_obj.y, tracker_core_obj.vel;
+      if(tracker_cores.count(*id)==0){
+        track_core init_core;
+        init_core.point = tracker_core_obj;
+        init_core.vel << 0,0;
+        tracker_cores[*id] = init_core;
+        // std::cout << "init tracker cores on index: " <<*id<<std::endl;
+      }
+      else{
+        // double dist = (Eigen::Vector2d(tracker_core_obj.x,tracker_core_obj.y) - Eigen::Vector2d(tracker_cores[*id].point.x,tracker_cores[*id].point.y)).norm();
+        // if(dist>tracker_cores[*id].vel.norm()){
+
+        // }
+        Eigen::Vector2d pred_v = Eigen::Vector2d(tracker_core_obj.x,tracker_core_obj.y) - Eigen::Vector2d(tracker_cores[*id].hitsory.back().x(),tracker_cores[*id].hitsory.back().y());
+        pred_v /= data_period;
+        // tracker_core_obj.x += pred_v(0);
+        // tracker_core_obj.y += pred_v(1);
+        // tracker_core_obj.x_v = pred_v(0);
+        // tracker_core_obj.y_v = pred_v(1);
+        tracker_cores[*id].point = tracker_core_obj;
+        tracker_cores[*id].vel << tracker_core_obj.x_v,tracker_core_obj.y_v;
+        // std::cout << "update tracker cores on index: " <<*id<<std::endl;
+
+      }
+      tracker_cores[*id].hitsory.push_back(temp_center);
+    }
+  }
+  for(auto search_id=tracking_id_history_map.begin();search_id!=tracking_id_history_map.end();search_id++){
+    int loss_frame_num = scan_num - search_id->second.back();
+    if(loss_frame_num>10){
+      if(tracker_core_flag){
+        auto it=tracker_cores.find(search_id->first);
+        it = tracker_cores.erase(it);
+      }
+      search_id = tracking_id_history_map.erase(search_id);
+      
+    }
+  }
 }
 
 std::vector<int> dbtrack::cluster_tracking_result(){
   return final_cluster_idx;
+}
+
+void dbtrack::updateTrackerVelocity(std::vector<std::vector<cluster_point>> cluster_result, std::vector<int> tracker_idx){
+  if(cluster_result.size()!=tracker_idx.size()){
+    RLS_MSG("\033[1;41m"<<"Cluster result is not comapred with tracker index"<<"\033[0m"<<std::endl);
+    return;
+  }
+  RLS_MSG("RLS velocity estimation START:" << std::endl);
+  RLS_MSG("============================================" << std::endl);
+  auto idx = tracker_idx.begin();
+  for(auto cluster_idx=cluster_result.begin();cluster_idx!=cluster_result.end();cluster_idx++,idx++){
+    if(tracking_id_history_map[*idx].size()<=1){
+      std::srand(time(NULL));
+      double random_delta = (double) std::rand() / (RAND_MAX + 0.01);
+      rls_est init_rls_core;
+      init_rls_core.P = random_delta*init_rls_core.P.Identity();
+      // init_rls_core.vel << tracker_cores[*idx].point.x_v, tracker_cores[*idx].point.y_v;
+      init_rls_core.vel << 0, 0;
+      tracker_vel_map[*idx] = init_rls_core;
+      continue;
+    }
+    else if(tracker_cores[*idx].hitsory.size()==2){
+      Eigen::Vector3d dist_diff = tracker_cores[*idx].hitsory.at(1) - tracker_cores[*idx].hitsory.at(0);
+      // dist_diff /= 0.08;
+      tracker_vel_map[*idx].vel << dist_diff(0) , dist_diff(1);
+      // if(tracker_vel_map[*idx].vel.norm()>2)
+      if(tracker_cores[*idx].point.vel>2){
+        tracker_vel_map[*idx].vel = tracker_vel_map[*idx].vel*13;
+      }
+      else{
+        tracker_vel_map[*idx].vel << tracker_cores[*idx].point.x_v, tracker_cores[*idx].point.y_v;
+      }
+      RLS_MSG("Init rls velocity:"<<tracker_vel_map[*idx].vel.transpose()<<std::endl);
+      Eigen::Vector2d cluster_vel(tracker_cores[*idx].point.x_v, tracker_cores[*idx].point.y_v);
+      RLS_vel(*cluster_idx,tracker_vel_map[*idx],cluster_vel);
+    }
+    else if(tracker_cores[*idx].hitsory.size()>2){
+      Eigen::Vector2d ref_vel(tracker_cores[*idx].point.x_v, tracker_cores[*idx].point.y_v);
+      if(tracker_cores[*idx].point.vel>2){
+        int hit_number = tracker_cores[*idx].hitsory.size();
+        Eigen::Vector3d dist_diff = tracker_cores[*idx].hitsory.back() - tracker_cores[*idx].hitsory.at(hit_number-2);
+        // dist_diff = dist_diff*13;
+        ref_vel << dist_diff(0), dist_diff(1);
+        ref_vel = tracker_cores[*idx].vel.dot(ref_vel)*ref_vel.normalized();
+      }
+      RLS_vel(*cluster_idx,tracker_vel_map[*idx],ref_vel);
+    }
+    // else{
+    //   continue;
+    // }
+    
+    // RLS_vel(*cluster_idx,tracker_vel_map[*idx]);
+    
+    if(tracker_vel_map[*idx].vel.norm() <= 1)
+      continue;
+    RLS_MSG("Tracker ID " << *idx << ", hit " << tracking_id_history_map[*idx].size() << " frames" << std::endl);
+    RLS_MSG("  Cluster Vel: " << tracker_cores[*idx].point.vel << "(" << tracker_cores[*idx].point.x_v << ", "
+                                                                           << tracker_cores[*idx].point.y_v << ")" << std::endl);
+    RLS_MSG("  RLS Vel: " << tracker_vel_map[*idx].vel.norm() << "(" << tracker_vel_map[*idx].vel.transpose() << ")" << std::endl);
+    RLS_MSG("  RLS P:\n" << tracker_vel_map[*idx].P << std::endl);
+    if(cluster_idx!=cluster_result.end())
+      RLS_MSG("------------------------------------------" << std::endl);
+  }
+  RLS_MSG("============================================" << std::endl);
+
+}
+
+
+/*
+ * Using the RLS to estimate the acutual velocity of one cluster
+ */
+void dbtrack::RLS_vel(std::vector<cluster_point> cluster_group, rls_est &rls_v, Eigen::Vector2d ref_vel){
+  bool update_P_only = false;
+  Eigen::Matrix2d P = rls_v.P;
+  Eigen::Vector2d v = rls_v.vel;
+  std::vector<cluster_point> shuffle_cluster_group = cluster_group;
+  for(auto element=shuffle_cluster_group.begin();element!=shuffle_cluster_group.end();){
+    if((scan_num-element->scan_time)>3){
+      shuffle_cluster_group.erase(element);
+    }
+    else
+      element++;
+  }
+  if(shuffle_cluster_group.size()<3){
+    update_P_only = true;
+  }
+  int random_num = 6;
+  Eigen::Matrix2d random_P[random_num];
+  Eigen::Vector2d random_v[random_num];
+  double reproject_error[random_num];
+  
+  for(int rand_i=0;rand_i<random_num;rand_i++){
+    random_P[rand_i] = rls_v.P;
+    random_v[rand_i] = rls_v.vel;
+    std::random_shuffle(shuffle_cluster_group.begin(),shuffle_cluster_group.end());
+    for(auto it=shuffle_cluster_group.begin();it!=shuffle_cluster_group.end();it++){
+      double r_norm = it->vel * (it->vel_dir?1.0:-1.0);
+      double theta = it->vel_ang;
+      Eigen::Vector2d phi(std::cos(theta),std::sin(theta));
+      // P = P - P*phi*phi.transpose()*P/(1+phi.transpose()*P*phi);
+      random_v[rand_i] = random_v[rand_i] + random_P[rand_i]*phi*(r_norm-phi.transpose()*random_v[rand_i])/(1+phi.transpose()*random_P[rand_i]*phi);
+      random_P[rand_i] = random_P[rand_i] - random_P[rand_i]*phi*phi.transpose()*random_P[rand_i]/(1+phi.transpose()*random_P[rand_i]*phi);
+    }
+    reproject_error[rand_i] = 0.0;
+    for(auto it:shuffle_cluster_group){
+      reproject_error[rand_i] += std::fabs(random_v[rand_i](0)*std::cos(it.vel_ang)+random_v[rand_i](1)*std::sin(it.vel_ang)-it.vel);
+    }
+  }
+  auto min_iter = std::min_element(reproject_error,reproject_error+random_num);
+  int min_idx = std::distance(reproject_error,min_iter);
+  RLS_MSG("\nReproject Error:"<<*min_iter<<" at index:"<<min_idx<<std::endl);
+  if(*min_iter>20){
+    RLS_MSG("---------------------------------\n");
+    RLS_MSG("Refresh RLS parameters"<<std::endl);
+    std::srand(time(NULL));
+    double random_delta = (double) std::rand() / (RAND_MAX + 0.01);
+    for(int rand_i=0;rand_i<random_num;rand_i++){
+      random_P[rand_i] = random_delta*P.Identity();
+      random_v[rand_i] = ref_vel;
+      std::random_shuffle(shuffle_cluster_group.begin(),shuffle_cluster_group.end());
+      for(auto it=shuffle_cluster_group.begin();it!=shuffle_cluster_group.end();it++){
+      double r_norm = it->vel * (it->vel_dir?1.0:-1.0);
+      double theta = it->vel_ang;
+      Eigen::Vector2d phi(std::cos(theta),std::sin(theta));
+      // P = P - P*phi*phi.transpose()*P/(1+phi.transpose()*P*phi);
+      random_v[rand_i] = random_v[rand_i] + random_P[rand_i]*phi*(r_norm-phi.transpose()*random_v[rand_i])/(1+phi.transpose()*random_P[rand_i]*phi);
+      random_P[rand_i] = random_P[rand_i] - random_P[rand_i]*phi*phi.transpose()*random_P[rand_i]/(1+phi.transpose()*random_P[rand_i]*phi);
+      }
+      reproject_error[rand_i] = 0.0;
+      for(auto it:shuffle_cluster_group){
+        reproject_error[rand_i] += std::fabs(random_v[rand_i](0)*std::cos(it.vel_ang)+random_v[rand_i](1)*std::sin(it.vel_ang)-it.vel);
+      }
+    }
+    min_iter = std::min_element(reproject_error,reproject_error+random_num);
+    min_idx = std::distance(reproject_error,min_iter);
+    RLS_MSG("\nReproject Error:"<<*min_iter<<" at index:"<<min_idx<<std::endl);
+    RLS_MSG("---------------------------------\n");
+
+  }
+  
+  P = random_P[min_idx];
+  v = random_v[min_idx];
+  
+  
+  // for(auto it=cluster_group.begin();it!=cluster_group.end();it++){
+  //   if(it->scan_time!=scan_num)
+  //     continue;
+  //   Eigen::Vector2d r(it->x_v,it->y_v);
+  //   double r_norm = r.norm() * (it->vel_dir?1.0:-1.0);
+  //   double theta = it->vel_ang;
+  //   Eigen::Vector2d phi(std::cos(theta),std::sin(theta));
+  //   // P = P - P*phi*phi.transpose()*P/(1+phi.transpose()*P*phi);
+  //   v = v + P*phi*(r_norm-phi.transpose()*v)/(1+phi.transpose()*P*phi);
+  //   P = P - P*phi*phi.transpose()*P/(1+phi.transpose()*P*phi);
+  // }
+  
+  rls_v.P = P;
+  if(!update_P_only){
+    rls_v.vel = v;
+  }
 }
 
 double dbtrack::distance(cluster_point p1, cluster_point p2){
@@ -631,18 +893,22 @@ void dbtrack::split_past_new(std::vector< cluster_point > process_data, std::vec
   // record the cluster result with past data
   cluster_with_history.clear();
   cluster_based_on_now.clear();
+  
   // get the history data with time series
   std::vector< std::vector< std::vector<cluster_point> > > points_cluster_vec;    // contains the cluster result with all datas(need current data)
   std::vector< std::vector< std::vector<cluster_point> > > past_points_cluster_vec;   // the cluster result that only contain past data
   
   // remove the cluster that only contains past data
   std::vector< std::vector<int> > temp_final_list;  // store the current points only
+  std::vector< std::vector<int> > temp_final_vec = final_cluster_order;  // temp vec
   for(std::vector< std::vector<int> >::iterator it=final_cluster_order.begin();it != final_cluster_order.end();){
     int count = 0;
     std::vector<int> temp;
     std::vector< std::vector<cluster_point> > temp_past_data(history_frame_num);    // store the cluster
     std::vector< cluster_point> temp_past_cluster;
     for(int i=0;i<(*it).size();i++){
+      // if(tracker_core_flag && ((*it).at(i)>=tracker_core_begin_index))
+      //   continue;
       if(process_data.at((*it).at(i)).scan_time != scan_num)
         count ++;
       else{
@@ -660,6 +926,8 @@ void dbtrack::split_past_new(std::vector< cluster_point > process_data, std::vec
     if(count == (*it).size()){
       past_points_cluster_vec.push_back(temp_past_data);
       for(int i=0;i<(*it).size();i++){
+        if(tracker_core_flag && ((*it).at(i)>=tracker_core_begin_index))
+          continue;
         int data_idx_in_process = (*it).at(i);
         int time_diff = scan_num - process_data.at(data_idx_in_process).scan_time;     // calculate the time layer of the element
         cluster_point *point_ptr = &points_history.at(points_history.size()-time_diff-1).at(process_data.at(data_idx_in_process).id);
@@ -679,8 +947,9 @@ void dbtrack::split_past_new(std::vector< cluster_point > process_data, std::vec
   points_cluster_vec.insert(points_cluster_vec.end(),past_points_cluster_vec.begin(),past_points_cluster_vec.end());
   history_points_with_cluster_order.clear();
   history_points_with_cluster_order = points_cluster_vec;
-
-  cluster_track(process_data,final_cluster_order);
+  
+  // cluster_track(process_data,final_cluster_order);
+  cluster_track(process_data,temp_final_vec);
   final_cluster_order = temp_final_list;
 }
 
@@ -728,10 +997,24 @@ void dbtrack::cluster_center(std::vector< std::vector<cluster_point> > cluster_l
 
 double dbtrack::vel_function(double vel, int frame_diff){
   // return vel_scale * vel * (dt_threshold_vel / history_frame_num * frame_diff + 1);
-  return vel_scale * vel;
+  return vel_scale * std::fabs(vel);
+  // return vel_scale * vel;
 }
 
 std::vector<cluster_point> dbtrack::get_center(void){
+  if(use_RLS){
+    if(final_center.size()!=final_cluster_idx.size()){
+      std::cout <<"\033[1;41m"<<"Cluster result is not comapred with tracker index"<<"\033[0m"<<std::endl;
+      return final_center;
+    }
+    auto center_item = final_center.begin();
+    for(auto id=final_cluster_idx.begin();id!=final_cluster_idx.end();id++,center_item++){
+      center_item->x_v = tracker_vel_map[*id].vel(0);
+      center_item->y_v = tracker_vel_map[*id].vel(1);
+      center_item->z_v = 0;
+      center_item->vel = tracker_vel_map[*id].vel.norm();
+    }
+  }
   return final_center;
 }
 
@@ -744,4 +1027,115 @@ void dbtrack::set_parameter(double eps, int Nmin, int frames_num, double dt_weig
   dbtrack_param.Nmin = Nmin;
   history_frame_num = frames_num;
   dt_threshold_vel = dt_weight;
+}
+
+void dbtrack::set_output_info(bool cluster_track_msg, bool motion_eq_optimizer_msg, bool rls_msg){
+  output_cluster_track_msg = cluster_track_msg;
+  output_motion_eq_optimizer_msg = motion_eq_optimizer_msg;
+  RLS_msg_flag = rls_msg;
+}
+
+std::vector< std::vector<cluster_point> > dbtrack::improve_cluster(std::vector<cluster_point> data){
+  input_cloud->clear();
+  points_history.push_back(data);
+  if(points_history.size()>history_frame_num){
+    points_history.erase(points_history.begin());
+  }
+  cluster_queue.clear();
+  cluster_queue.shrink_to_fit();
+  // ready to process the cluster points
+  std::vector< cluster_point > process_data;
+
+  for(int i=0;i<points_history.size();i++){
+    for(int j=0;j<points_history.at(i).size();j++){
+      pcl::PointXYZ temp_pt;
+      temp_pt.x = points_history.at(i).at(j).x;
+      temp_pt.y = points_history.at(i).at(j).y;
+      temp_pt.z = vel_function(points_history.at(i).at(j).vel, scan_num - points_history.at(i).at(j).scan_time);
+      input_cloud->points.push_back(temp_pt);
+      process_data.push_back(points_history.at(i).at(j));
+      // initialize the reachable_dist
+      dbtrack_info cluster_pt;
+      cluster_pt.reachable_dist = -1; // undefined distance
+      cluster_queue.push_back(cluster_pt);
+    }
+  }
+  tracker_core_begin_index = process_data.size();
+  if(tracker_core_flag && tracker_cores.size()>0){
+    std::cout << "Tracker core index: " << tracker_core_begin_index << std::endl;
+    for(auto core=tracker_cores.begin();core!=tracker_cores.end();core++){
+      if(core->second.hitsory.size()<5)
+        continue;
+      pcl::PointXYZ temp_pt;
+      temp_pt.x = core->second.point.x;
+      temp_pt.y = core->second.point.y;
+      temp_pt.z = vel_function(core->second.point.vel, scan_num - core->second.point.scan_time);
+      input_cloud->points.push_back(temp_pt);
+      process_data.push_back(core->second.point);
+      // initialize the reachable_dist
+      dbtrack_info cluster_pt;
+      cluster_pt.reachable_dist = -1; // undefined distance
+      cluster_queue.push_back(cluster_pt);
+      std::cout << "Add Tracking Core point:(" << core->second.point.x << ", "
+                                               << core->second.point.y << ")";
+      std::cout << "\tVelocity: " << core->second.point.vel;
+      std::cout << "\tTracking ID: " << core->first << ", hit: " << core->second.hitsory.size() << std::endl;
+    }
+  }
+
+
+
+
+  
+  // Set the kd-tree input
+  kdtree.setInputCloud(input_cloud);
+
+  std::cout << "DBTRACK Cluster points size : " << data.size() << "/" << process_data.size() << "(" << points_history.size() << " frames)" << std::endl;
+  std::vector< std::vector<int> > final_cluster_order;
+    
+  // DBSCAN cluster
+  for(int i=0;i<process_data.size();i++){
+    // check if the pt has been visited
+    if(process_data.at(i).visited)
+      continue;
+    else if(process_data.at(i).noise_detect.size()>=noise_point_frame){
+      process_data.at(i).visited = true;
+      continue;
+    }
+    else
+      process_data.at(i).visited = true;
+    std::vector<int> temp_cluster;
+    
+    // find neighbor and get the core distance
+    cluster_queue.at(i).neighbor_info = find_neighbors(process_data.at(i));
+    temp_cluster.push_back(i);
+    // satisfy the Nmin neighbors (!= 0: find all cluster even the single point;>=Nmin : remove the noise)
+    if(cluster_queue.at(i).neighbor_info.pointIdxNKNSearch.size() != 0){
+      cluster_queue.at(i).core_dist = std::sqrt(*std::max_element(cluster_queue.at(i).neighbor_info.pointNKNSquaredDistance.begin(),
+                                                cluster_queue.at(i).neighbor_info.pointNKNSquaredDistance.end()));
+      if(process_data.at(i).noise_detect.size()==0)
+        expand_neighbor(process_data, temp_cluster, i);
+      // final_cluster_order.push_back(temp_cluster); // filter out the outlier that only contains one point in one cluster
+    }
+    else{
+      cluster_queue.at(i).core_dist = -1;      // undefined distance (not a core point)
+    }
+    final_cluster_order.push_back(temp_cluster);    // push the cluster that contains only one point to the final cluster result
+  }
+    
+  std::vector< std::vector<cluster_point> > cluster_result;
+  // split_past(process_data, final_cluster_order);
+  split_past_new(process_data, final_cluster_order);
+  // for(int i=0;i<final_cluster_order.size();i++){
+  //   std::vector<cluster_point> temp_cluster_unit;
+  //   for(int j=0;j<final_cluster_order.at(i).size();j++){
+  //     temp_cluster_unit.push_back(process_data.at(final_cluster_order.at(i).at(j)));
+  //   }
+  //   cluster_result.push_back(temp_cluster_unit);
+  // }
+  // cluster center is calculated from the merge_cluster() function
+  // cluster_center(cluster_result);
+  cluster_result = current_final_cluster_vec;
+
+  return cluster_result;
 }
