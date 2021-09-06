@@ -102,17 +102,21 @@ typedef message_filters::sync_policies::ApproximateTime<conti_radar::Measurement
 
 ros::Publisher pub_cluster_marker;  // pub cluster index
 ros::Publisher pub_marker;          // pub tracking id
+ros::Publisher pub_anno_marker;     // pub annotation tracking id
 ros::Publisher pub_filter;          // pub filter points
 ros::Publisher pub_in_filter;       // pub the inlier points
 ros::Publisher pub_out_filter;      // pub the outlier points
 ros::Publisher pub_cluster_center;  // pub cluster points
 ros::Publisher pub_cluster_pointcloud;  // pub cluster point cloud
 ros::Publisher pub_tracker_point;   // pub the tracker with pointcloud2
+ros::Publisher vis_vel_rls;         // pub radar RLS vel
 ros::Publisher vis_vel_comp;        // pub radar comp vel
+ros::Publisher vis_anno_vel;        // pub the annotation tracking vel
 ros::Publisher vis_tracking_vel;    // pub radar tracking vel
 ros::Publisher vis_vel;             // pub radar vel
 ros::Publisher pub_trajectory;      // pub the tracking trajectory
 ros::Publisher pub_trajectory_smooth;  // pub the tracking trajectory using kf smoother
+ros::Publisher pub_anno_trajectory; // pub the annotation tracking trajectory
 ros::Publisher pub_pt;              // pub the tracking history pts
 ros::Publisher pub_pred;            // pub the predicted pts
 ros::Publisher pub_annotation;      // pub the label annotaion to /map frame and set the duration to 0.48s
@@ -131,6 +135,7 @@ std::vector<string> frame_list{ "nuscenes_radar_front",
 tf::StampedTransform echo_transform;    // tf between map and radar_front
 std::vector<tf::StampedTransform> radar_transform(5);  // tf between radars(f,fr,fl,br,bl) and car
 std::vector<int> get_radar_transform_check = {0,0,0,0,0};          // check if the transfrom has been get
+bool get_map_transform = false;
 tf::StampedTransform map_transform, car_transform;
 std::vector<tf::StampedTransform> radar_to_map_transform(5);  // tf between radars(f,fr,fl,br,bl) and map
 /*
@@ -215,6 +220,7 @@ std::vector<int> cluster_tracking_result_dbpda;
 visualization_msgs::MarkerArray m_s,l_s,cluster_s;
 visualization_msgs::MarkerArray ClusterHulls; // show the radar cluster polygon marker
 int max_size = 0, cluster_marker_max_size = 0, cluster_polygon_max_size = 0, trajcetory_max_size = 0, vel_marker_max_size = 0, tracking_vel_marker_max_size = 0, cov_marker_max_size = 0;
+int anno_vel_max = 0, anno_tra_max = 0;
 int debug_id_max_size = 0;
 typedef struct marker_color
 {
@@ -270,7 +276,7 @@ void marker_color_init(){
   tra_color.scale.y = 0.2f;
   tra_color.scale.z = 0.2f;
   // pink
-  tra_color.color.a = 0.7;
+  tra_color.color.a = 1.0;
   tra_color.color.r = 226.0f/255.0f;
   tra_color.color.g = 195.0f/255.0f;
   tra_color.color.b = 243.0f/255.0f;
@@ -341,17 +347,19 @@ float sigmaQ = 0.1;   //0.1
 #define bias 4.0      // used for data association bias 5 6
 #define mahalanobis_bias 5.5 // used for data association(mahalanobis dist)
 int id_count = 0; //the counter to calculate the current occupied track_id
+int anno_id_count = 0; //the counter to calculate the current occupied annotation track_id
 #define frame_lost 10   // 5 10
 
 std::vector <int> id;
 ros::Publisher objID_pub;
 // KF init
 int stateDim = 6; // [x,y,z,v_x,v_y,v_z]
-int measDim = 3;  // [x,y,z//,v_x,v_y,v_z]
+int measDim = 3;  // [x,y,z,v_x,v_y,v_z]
 int ctrlDim = 0;  // control input 0(acceleration=0,constant v model)
 
 
 bool firstFrame = true;
+bool firstGTFrame = true;
 bool get_transformer = false;
 tf::TransformListener *tf_listener;
 
@@ -376,6 +384,9 @@ int cluster_Nmin;
 int cluster_history_frames;
 double cluster_dt_weight; // use for the vel_function in cluster lib
 bool viz_cluster_with_past = true;  // True : visualize the cluster result with past and now, false : with current only
+bool cluster_track_msg = false;
+bool motion_eq_optimizer_msg = false;
+bool rls_msg = false;
 // dbscan init
 dbscan dbscan_seg;
 
@@ -438,6 +449,7 @@ typedef struct track{
 
 // tracking result vector
 std::vector<track> filters;
+std::vector<track> anno_filters;  // the annotation tracking filters
 
 
 
@@ -1160,6 +1172,164 @@ void vel_marker(std::vector< conti_radar::MeasurementConstPtr > call_back_msg_li
   pub_debug_id_text.publish(debug_id_array);
 }
 
+void rls_vel_marker(std::vector<kf_tracker_point> rls_points){
+  visualization_msgs::MarkerArray rls_marker;
+  int count_vel_num = 0;
+  for(auto pt=rls_points.begin();pt!=rls_points.end();pt++){
+    visualization_msgs::Marker marker;
+    marker.header.frame_id = MAP_FRAME;
+    marker.header.stamp = ros::Time();
+    marker.id = count_vel_num++;
+    marker.type = visualization_msgs::Marker::ARROW;
+    marker.action = visualization_msgs::Marker::ADD;
+    tf::Point map2car_pt(pt->x,pt->y,0);
+    // map2car_pt = radar_transform.at(0)*radar_to_map_transform.at(0).inverse()*map2car_pt;
+    marker.pose.position.x = map2car_pt.x();
+    marker.pose.position.y = map2car_pt.y();
+    marker.pose.position.z = 5;
+    double rls_vx = pt->x_v;
+    double rls_vy = pt->y_v;
+    float theta = atan2(rls_vy,
+                        rls_vx);
+    tf2::Quaternion Q;
+    Q.setRPY( 0, 0, theta );
+    marker.pose.orientation = tf2::toMsg(Q);
+    marker.scale = vel_comp_color.scale;
+    // vel length
+    marker.scale.x = sqrt(pow(rls_vy,2) + 
+                          pow(rls_vx,2));
+    
+    if(marker.scale.x<1){
+      marker.color.a = 0;
+    }
+    marker.color = vel_color.color;
+    marker.color.a = 0.9;
+    // marker.color.r = 0;
+    // marker.color.g = 1.0;
+    // marker.color.b = 0;
+
+    rls_marker.markers.push_back(marker);
+    
+  }
+
+  if(count_vel_num > vel_marker_max_size)
+    vel_marker_max_size = count_vel_num;
+  for(int a=count_vel_num;a<vel_marker_max_size;a++){
+    visualization_msgs::Marker marker;
+		marker.header.frame_id = RADAR_FRONT_FRAME;
+		marker.header.stamp = ros::Time();
+		marker.id = a;
+		marker.type = visualization_msgs::Marker::ARROW;
+		marker.action = visualization_msgs::Marker::DELETE;
+		marker.pose.position.x = 0;
+		marker.pose.position.y = 0;
+		marker.pose.position.z = 1;
+    marker.color.a = 0;
+		rls_marker.markers.push_back(marker);
+  }
+	vis_vel_rls.publish(rls_marker);
+}
+
+void annotation_KF_vis(std::vector<track> anno_points){
+  visualization_msgs::MarkerArray anno_vel_marker;
+  visualization_msgs::MarkerArray tra_array;
+  int count_vel_num = 0;
+  int count_tra_num = 0;
+  int anno_tracking_traj_frame = 3;
+  double anno_life_time = 0.50;
+  for(auto pt=anno_points.begin();pt!=anno_points.end();pt++){
+    if(pt->tracking_state != TRACK_STATE::tracking)
+      continue;
+    visualization_msgs::Marker marker;
+    marker.header.frame_id = MAP_FRAME;
+    marker.header.stamp = ros::Time::now();
+    marker.id = count_vel_num++;
+    // velocity marker
+    marker.type = visualization_msgs::Marker::ARROW;
+    marker.action = visualization_msgs::Marker::ADD;
+    marker.ns = "annotation vel";
+    marker.lifetime = ros::Duration(anno_life_time);
+    marker.pose.position = pt->history.back();
+    Eigen::Vector2d anno_vel;
+    // anno_vel << pt->history.
+    float theta = atan2(pt->pred_v.y,
+                        pt->pred_v.x);
+    tf2::Quaternion Q;
+    Q.setRPY( 0, 0, theta );
+    marker.pose.orientation = tf2::toMsg(Q);
+    marker.scale = itri_vel_color.scale;
+    // vel length
+    marker.scale.x = sqrt(pow(pt->pred_v.y,2) + 
+                          pow(pt->pred_v.x,2));
+    
+    if(marker.scale.x<1){
+      marker.color.a = 0;
+    }
+    marker.color = vel_color.color;
+    marker.color.a = 1.0;
+    anno_vel_marker.markers.push_back(marker);
+
+    // trajectory marker
+    visualization_msgs::Marker tra_marker;
+    tra_marker.header.frame_id = MAP_FRAME;
+    tra_marker.header.stamp = ros::Time::now();
+    tra_marker.type = visualization_msgs::Marker::LINE_STRIP;
+    tra_marker.action = visualization_msgs::Marker::ADD;
+    tra_marker.lifetime = ros::Duration(anno_life_time);
+    tra_marker.ns = "annotation trajectory";
+    tra_marker.id = count_tra_num++;
+    tra_marker.pose.orientation.w = 1.0;
+    tra_marker.scale = itri_tra_color.scale;
+    tra_marker.scale.x = 0.4;
+    tra_marker.color = tra_color.color;
+    if(pt->history.size() < anno_tracking_traj_frame){
+      for(auto it:pt->history){
+        tra_marker.points.push_back(it);
+      }
+    }
+    else{
+      for(auto it=pt->history.rbegin();it!=pt->history.rbegin()+anno_tracking_traj_frame;++it){
+        tra_marker.points.push_back(*it);
+      }
+    }
+    tra_array.markers.push_back(tra_marker);
+    
+  }
+  if(count_vel_num > anno_vel_max)
+    vel_marker_max_size = count_vel_num;
+  for(int a=count_vel_num;a<anno_vel_max;a++){
+    visualization_msgs::Marker marker;
+		marker.header.frame_id = MAP_FRAME;
+		marker.header.stamp = label_stamp;
+		marker.id = a;
+		marker.type = visualization_msgs::Marker::ARROW;
+		marker.action = visualization_msgs::Marker::DELETE;
+		marker.pose.position.x = 0;
+		marker.pose.position.y = 0;
+		marker.pose.position.z = 1;
+    marker.color.a = 0;
+		anno_vel_marker.markers.push_back(marker);
+  }
+  if(count_tra_num > anno_tra_max)
+    trajcetory_max_size = count_tra_num;
+  for(int a = count_tra_num;a<anno_tra_max;a++){
+    visualization_msgs::Marker marker;
+    marker.header.frame_id = MAP_FRAME;
+    marker.header.stamp = label_stamp;
+    marker.lifetime = ros::Duration(anno_life_time);
+    marker.type = visualization_msgs::Marker::LINE_STRIP;
+    marker.action = visualization_msgs::Marker::DELETE;
+    marker.id = a;
+    marker.pose.orientation.w = 1.0;
+    marker.scale.x = 0.2f;
+    marker.scale.y = 0.2f;
+    marker.color.a = 0;
+    tra_array.markers.push_back(marker);
+  }
+	vis_anno_vel.publish(anno_vel_marker);
+  pub_anno_trajectory.publish(tra_array);
+}
+
 visualization_msgs::Marker get_ellipse(track track_pt, int id_count){
   cv::Mat S = track_pt.kf.measurementMatrix * track_pt.kf.errorCovPre * track_pt.kf.measurementMatrix.t() + track_pt.kf.measurementNoiseCov;
   cv::Mat cov = (Mat_<double>(2,2) << S.at<float>(0,0),S.at<float>(0,1),
@@ -1610,9 +1780,16 @@ int new_track(kf_tracker_point &cen, int idx, int direct_assign_tracker_id=-1){
   ka.statePost.at<float>(0)=cen.x;
   ka.statePost.at<float>(1)=cen.y;
   ka.statePost.at<float>(2)=cen.z;
-  ka.statePost.at<float>(3)=cen.x_v;// initial v_x
-  ka.statePost.at<float>(4)=cen.y_v;// initial v_y
-  ka.statePost.at<float>(5)=cen.z_v;// initial v_z
+  if(measDim<=3){
+    ka.statePost.at<float>(3)=0;// initial v_x
+    ka.statePost.at<float>(4)=0;// initial v_y
+    ka.statePost.at<float>(5)=0;// initial v_z
+  }
+  else{
+    ka.statePost.at<float>(3)=cen.x_v;// initial v_x
+    ka.statePost.at<float>(4)=cen.y_v;// initial v_y
+    ka.statePost.at<float>(5)=cen.z_v;// initial v_z
+  }
 
   // errorCovPost seems not work well in radar case?
   // ka.errorCovPost = (Mat_<float>(6, 6) << 1,0,0,0,0,0,
@@ -1649,7 +1826,7 @@ int new_track(kf_tracker_point &cen, int idx, int direct_assign_tracker_id=-1){
     cen.motion = MOTION_STATE::move;
   }
   tk.lose_frame = 0;
-  tk.track_frame = 0;
+  tk.track_frame = 1;
   tk.cluster_idx = idx;
   if(direct_assign_tracker_id!=-1)
     tk.uuid = direct_assign_tracker_id;
@@ -1657,6 +1834,58 @@ int new_track(kf_tracker_point &cen, int idx, int direct_assign_tracker_id=-1){
     tk.uuid = ++id_count;
   filters.push_back(tk);
   // std::cout<<"Done init newT at "<<id_count<<" is ("<<tk.pred_pose.x <<"," <<tk.pred_pose.y<<")"<<endl;
+  return tk.uuid;
+}
+
+int new_anno_track(kf_tracker_point &cen, int idx, int direct_assign_tracker_id=-1){
+  track tk;
+  cv::KalmanFilter ka;
+  ka.init(stateDim,3,ctrlDim,CV_32F);
+  double anno_dt = 0.5;
+  ka.transitionMatrix = (Mat_<float>(6, 6) << 1,0,0,anno_dt,0,0,
+                                              0,1,0,0,anno_dt,0,
+                                              0,0,1,0,0,anno_dt,
+                                              0,0,0,1,0,0,
+                                              0,0,0,0,1,0,
+                                              0,0,0,0,0,1);
+  cv::setIdentity(ka.measurementMatrix);
+  cv::setIdentity(ka.processNoiseCov, Scalar::all(10));
+  cv::setIdentity(ka.measurementNoiseCov, cv::Scalar::all(sigmaQ));
+  cv::setIdentity(ka.errorCovPost,cv::Scalar::all(0.1));
+  ka.statePost.at<float>(0)=cen.x;
+  ka.statePost.at<float>(1)=cen.y;
+  ka.statePost.at<float>(2)=cen.z;
+  ka.statePost.at<float>(3)=0;// initial v_x
+  ka.statePost.at<float>(4)=0;// initial v_y
+  ka.statePost.at<float>(5)=0;// initial v_z
+
+  geometry_msgs::Point pt, pt_v;
+  cv::Mat pred;
+  pred = ka.predict();
+  pt.x = pred.at<float>(0);
+  pt.y = pred.at<float>(1);
+  pt.z = pred.at<float>(2);
+  pt_v.x = pred.at<float>(3);
+  pt_v.y = pred.at<float>(4);
+  pt_v.z = pred.at<float>(5);
+  tk.pred_pose = pt;
+  tk.pred_v = pt_v;
+
+  tk.kf = ka;
+  tk.tracking_state = TRACK_STATE::tracking;
+  tk.lose_frame = 0;
+  tk.track_frame = 1;
+  tk.cluster_idx = idx;
+  geometry_msgs::Point hist_pt;
+  hist_pt.x = cen.x;
+  hist_pt.y = cen.y;
+  hist_pt.z = cen.z;
+  tk.history.push_back(hist_pt);
+  if(direct_assign_tracker_id!=-1)
+    tk.uuid = direct_assign_tracker_id;
+  else
+    tk.uuid = ++anno_id_count;
+  anno_filters.push_back(tk);
   return tk.uuid;
 }
 
@@ -1867,18 +2096,21 @@ void cluster_KFT(std::vector<int> cluster_tracking_result){
         meas[i][0] = pt.x;
         meas[i][1] = pt.y;
         meas[i][2] = pt.z;
-        // meas[i][3] = pt.x_v;
-        // meas[i][4] = pt.y_v;
-        // meas[i][5] = pt.z_v;
-        
+        if(measDim>3){
+          meas[i][3] = pt.x_v;
+          meas[i][4] = pt.y_v;
+          meas[i][5] = pt.z_v;
+        }
     }
     else if ( (*it).tracking_state == TRACK_STATE::missing ){
         meas[i][0] = (*it).pred_pose.x; //+ (*it).pred_v.x;
         meas[i][1] = (*it).pred_pose.y;//+ (*it).pred_v.y;
         meas[i][2] = (*it).pred_pose.z; //+ (*it).pred_v.z;
-        // meas[i][3] = (*it).pred_v.x;
-        // meas[i][4] = (*it).pred_v.y;
-        // meas[i][5] = (*it).pred_v.z;
+        if(measDim>3){
+          meas[i][3] = (*it).pred_v.x;
+          meas[i][4] = (*it).pred_v.y;
+          meas[i][5] = (*it).pred_v.z;
+          }
     }
     else
     {
@@ -2308,6 +2540,10 @@ void get_transform(ros::Time timestamp){
   tf_listener->waitForTransform(MAP_FRAME,CAR_FRAME,timestamp,ros::Duration(1));
   std::cout << std::fixed; std::cout.precision(3);
   try{
+    
+    double map_x = map_transform.getOrigin().x();
+    double map_y = map_transform.getOrigin().y();
+    double map_t = map_transform.stamp_.toSec();
     tf_listener->lookupTransform(MAP_FRAME,CAR_FRAME,timestamp,map_transform);
     if(output_transform_info){
       std::cout << "\033[1;33mGet Transform:\033[0m" << std::endl;
@@ -2319,6 +2555,13 @@ void get_transform(ros::Time timestamp){
                 << q.getZ() << ", " << q.getW() << "]" << std::endl;
       std::cout<<"- Frame id: "<<map_transform.frame_id_<<", Child id: "<<map_transform.child_frame_id_<<endl;
     }
+    if(get_map_transform){
+      vx = (map_transform.getOrigin().x() - map_x)/(map_transform.stamp_.toSec()-map_t);
+      vy = (map_transform.getOrigin().y() - map_y)/(map_transform.stamp_.toSec()-map_t);
+    }
+    // check if we get the map transform or not
+    if(!get_map_transform)
+      get_map_transform = true;
   }
   catch(tf::TransformException& ex)
   {
@@ -2362,10 +2605,16 @@ void first_frame_KFT(std::vector<int> cluster_tracking_result={}){
     ka.statePost.at<float>(0)=cens.at(i).x;
     ka.statePost.at<float>(1)=cens.at(i).y;
     ka.statePost.at<float>(2)=cens.at(i).z;
-    ka.statePost.at<float>(3)=cens.at(i).x_v;// initial v_x
-    ka.statePost.at<float>(4)=cens.at(i).y_v;// initial v_y
-    ka.statePost.at<float>(5)=cens.at(i).z_v;// initial v_z
-
+    if(measDim<=3){
+      ka.statePost.at<float>(3)=0;// initial v_x
+      ka.statePost.at<float>(4)=0;// initial v_y
+      ka.statePost.at<float>(5)=0;// initial v_z
+    }
+    else{
+      ka.statePost.at<float>(3)=cens.at(i).x_v;// initial v_x
+      ka.statePost.at<float>(4)=cens.at(i).y_v;// initial v_y
+      ka.statePost.at<float>(5)=cens.at(i).z_v;// initial v_z
+    }
     tk.kf = ka;
     tk.kf_us = ka;  // ready to update the state
     tk.tracking_state = TRACK_STATE::tracking;
@@ -2389,6 +2638,178 @@ void first_frame_KFT(std::vector<int> cluster_tracking_result={}){
   std::vector<int> no_use_id;
   marker_id(firstFrame,no_use_id,no_use_id,no_use_id);
   firstFrame=false;
+  return;
+}
+
+void annotation_KFT(std::vector<kf_tracker_point> anno_cens){
+  std::vector<std::vector<double> > distMat;
+  for(auto &it:anno_filters){
+    cv::Mat pred = it.kf.predict();
+    it.pred_pose.x = pred.at<float>(0);
+    it.pred_pose.y = pred.at<float>(1);
+    it.pred_pose.z = pred.at<float>(2);
+    it.pred_v.x = pred.at<float>(3);
+    it.pred_v.y = pred.at<float>(4);
+    it.pred_v.z = pred.at<float>(5);
+    
+    std::vector<double> distVec;
+    for(auto c:anno_cens){
+      /*  Decide the covariance matrix
+          errorCovPost(P):posteriori error estimate covariance matrix
+          errorCovPre(P'):priori error estimate covariance matrix
+          measurementNoiseCov(R):measurement noise covariance matrix
+          processNoiseCov(Q):process noise covariance matrix
+      */
+      cv::Mat S = it.kf.measurementMatrix * it.kf.errorCovPre * it.kf.measurementMatrix.t() + it.kf.measurementNoiseCov;
+      geometry_msgs::Point geo_center;
+      geo_center.x = c.x;
+      geo_center.y = c.y;
+      geo_center.z = c.z;
+      // double dist = mahalanobis_distance(it.pred_pose,geo_center,S.inv());
+      double dist = euclidean_distance(it.pred_pose,geo_center);
+      distVec.push_back(dist);
+    }
+    distMat.push_back(distVec);
+  }
+  std::cout << "Now annotation centers:" << anno_cens.size() << std::endl;
+  vector<int> assignment;
+  // if(DA_choose){
+    //hungarian method to optimize(minimize) the dist matrix
+    HungarianAlgorithm HungAlgo;
+    double cost = HungAlgo.Solve(distMat, assignment);
+    
+    // if(output_DA_pair){
+      std::cout<<"HungAlgo assignment pair:\n";
+      for (unsigned int x = 0; x < distMat.size(); x++)
+        std::cout << x << "," << assignment[x] << "\t";
+      std::cout << "\ncost: " << cost << std::endl; // HungAlgo computed cost
+    // }
+  // }
+  // else{
+  //   // my DA method
+  //   assignment = find_min(distMat);
+  //   if(output_DA_pair){
+  //     std::cout<<"My DA assignment pair:\n";
+  //     for (unsigned int x = 0; x < distMat.size(); x++)
+  //       std::cout << x << "," << assignment[x] << "\t";
+  //     std::cout<<endl;
+  //   }
+  // }
+
+  std::vector<int> obj_id(anno_cens.size(),-1);
+  std::vector<int> tracking_frame_obj_id(anno_cens.size(),-1);
+
+  int match_idx = -1;
+  for(auto &it:anno_filters){
+    std::vector<double> dist_vec = distMat.at(++match_idx);
+    std::cout<<"------------------------------------------------\n";
+    std::cout<<"Tracker pos:"<<it.history.back().x<<","<<it.history.back().y<<","<<it.history.back().z<<std::endl;
+    std::cout<<"predict v:"<<it.pred_v.x<<","<<it.pred_v.y<<endl;
+    std::cout<<"predict pos:"<<it.pred_pose.x<<","<<it.pred_pose.y<<endl;
+    if(assignment[match_idx]!=-1){
+      int anno_cen_idx = assignment[match_idx];
+      std::cout << "Match with anno_cen idx:"<<anno_cen_idx<<std::endl;
+      std::cout << "Center pos:"<<anno_cens.at(anno_cen_idx).x<<","<<anno_cens.at(anno_cen_idx).y<<","<<anno_cens.at(anno_cen_idx).z<<std::endl;
+      Eigen::Vector3d dist_diff(anno_cens.at(anno_cen_idx).x-it.pred_pose.x,
+                                anno_cens.at(anno_cen_idx).y-it.pred_pose.y,
+                                anno_cens.at(anno_cen_idx).z-it.pred_pose.z);
+      std::cout <<"Distance:"<<dist_diff.norm()<<std::endl;
+      if(dist_diff.norm() <= 5){
+        obj_id[anno_cen_idx] = it.uuid;
+        if(it.track_frame>tracking_stable_frames)
+          tracking_frame_obj_id[anno_cen_idx] = it.uuid;
+        it.cluster_idx = anno_cen_idx;
+        it.tracking_state = TRACK_STATE::tracking;
+
+        geometry_msgs::Point tracking_pt_history;
+        tracking_pt_history.x = anno_cens.at(anno_cen_idx).x;
+        tracking_pt_history.y = anno_cens.at(anno_cen_idx).y;
+        tracking_pt_history.z = anno_cens.at(anno_cen_idx).z;
+        it.history.push_back(tracking_pt_history);
+        // get the smooth path from the KF predict pos
+        tracking_pt_history.x = it.kf.statePre.at<float>(0);
+        tracking_pt_history.y = it.kf.statePre.at<float>(1);
+        tracking_pt_history.z = it.kf.statePre.at<float>(2);
+        it.history_smooth.push_back(tracking_pt_history);
+
+        distMat[match_idx] = std::vector<double>(anno_cens.size(),10000.0);
+        for(int row=0;row<distMat.size();row++){
+          distMat[row][anno_cen_idx] = 10000.0;
+        }
+      }
+      else{
+        it.tracking_state = TRACK_STATE::missing;
+      }
+    }
+    else{
+      std::cout<<"Miss Matching\n";
+      it.tracking_state = TRACK_STATE::missing;
+    }
+  }
+
+  vector<int> marker_obj_id = obj_id;
+  //initiate new tracks for not-matched(obj_id = -1) cluster
+  for (int i=0; i<anno_cens.size(); i++){
+    if(obj_id.at(i) == -1){
+      obj_id.at(i) = new_anno_track(anno_cens.at(i),i);
+    }
+  }
+
+  for(auto it=anno_filters.begin();it!=anno_filters.end();){
+    switch (it->tracking_state)
+    {
+      case TRACK_STATE::tracking:
+        it->track_frame++;
+        it->lose_frame = 0;
+        break;
+      
+      case TRACK_STATE::missing:
+        it->lose_frame++;
+        break;
+
+      default:
+        break;
+    }
+    if(it->lose_frame == 2)
+      it = anno_filters.erase(it);
+    else
+      it++;
+  }
+
+  std::cout<<"\033[1;33mAnnotation Tracker number: "<<anno_filters.size()<<" tracks.\033[0m\n"<<endl;
+
+  // visualization
+  annotation_KF_vis(anno_filters);
+
+  // update KF
+  int num = anno_filters.size();
+  float meas[num][3];
+  cv::Mat measMat[num];
+  cv::Mat estimated[num];
+
+  int update_idx = 0;
+  for(auto &it:anno_filters){
+    switch (it.tracking_state)
+    {
+      case TRACK_STATE::tracking:
+        meas[update_idx][0] = anno_cens[it.cluster_idx].x;
+        meas[update_idx][1] = anno_cens[it.cluster_idx].y;
+        meas[update_idx][2] = anno_cens[it.cluster_idx].z;
+        break;
+      case TRACK_STATE::missing:
+        meas[update_idx][0] = it.pred_pose.x;
+        meas[update_idx][1] = it.pred_pose.y;
+        meas[update_idx][2] = it.pred_pose.z;
+        break;
+      default:
+        std::cout<<"Some tracks state not defined to tracking/lost."<<std::endl;
+        break;
+    }
+    measMat[update_idx] = cv::Mat(3,1,CV_32F,meas[update_idx]);
+    estimated[update_idx] = it.kf.correct(measMat[update_idx]);
+    update_idx++;
+
+  }
   return;
 }
 
@@ -2672,7 +3093,9 @@ void transform_radar_msg_to_cluster_data( const conti_radar::MeasurementConstPtr
                                           pcl::PointCloud<pcl::PointXYZI>::Ptr &pub_filter_points, std::vector<kf_tracker_point> &cluster_data){
   // get the velocity transform matrix to map
   tf::StampedTransform vel_transform = radar_to_map;
+  tf::StampedTransform radar2car_transform = radar_transform.at(0);
   vel_transform.setOrigin(tf::Vector3(0,0,0));
+  radar2car_transform.setOrigin(tf::Vector3(0,0,0));
   for(int i = 0;i<msg->points.size();i++){
     if(!std::isfinite(msg->points[i].longitude_dist) || !std::isfinite(msg->points[i].lateral_dist)){
       ROS_WARN("Get weird position at (%f, %f)",msg->points[i].longitude_dist,msg->points[i].lateral_dist);
@@ -2689,23 +3112,54 @@ void transform_radar_msg_to_cluster_data( const conti_radar::MeasurementConstPtr
     }
     else{
       tf::Point trans_pt;
-      tf::Vector3 trans_vel;
+      tf::Vector3 trans_vel,trans_pos;
+      trans_pos.setValue(msg->points[i].longitude_dist, msg->points[i].lateral_dist, 0);
+      trans_pos = radar2car_transform * trans_pos;
       trans_pt.setValue(msg->points[i].longitude_dist, msg->points[i].lateral_dist, 0);
       trans_pt = radar_to_map * trans_pt;
       trans_vel.setValue(msg->points[i].longitude_vel_comp, msg->points[i].lateral_vel_comp, 0);
       trans_vel = vel_transform * trans_vel;
+      // trans_vel = vel_transform * trans_vel;
       // float range = sqrt(pow(msg->points[i].longitude_dist,2) + 
       //                     pow(msg->points[i].lateral_dist,2));
+      // use the velocity w.r.t. sensor
       float velocity = sqrt(pow(trans_vel.y(),2) + 
                             pow(trans_vel.x(),2));
-      double angle = atan2(trans_vel.y(),trans_vel.x())*180/M_PI;
+      // double vel_angle = std::atan2(trans_vel.y(),trans_vel.x());
+      // double angle = std::atan2(trans_vel.y(),trans_vel.x())*180/M_PI;
+      // double vel_angle = std::atan2(msg->points[i].lateral_vel_comp,msg->points[i].longitude_vel_comp);
+      double vel_angle = std::atan2(msg->points[i].lateral_dist,msg->points[i].longitude_dist);
+      // vel_angle = vel_angle + (vel_angle >= 0 ? 0 : 2*M_PI);
+      // double radar2map_angle = radar_to_map.getRotation().getAngle();
+      double radar2map_angle = tf::getYaw(radar_to_map.getRotation());
+      double radar2car_angle = radar2car_transform.getRotation().getAngle();
+      // double car2map_angle = car_transform.getRotation().getAngle();
+      double car2map_angle = tf::getYaw(map_transform.getRotation());
+      // double angle = vel_angle + radar2car_angle;
+      double angle = std::atan2(trans_pos.y(),trans_pos.x());
+      // angle += (angle>=0? 0: 2*M_PI);
+      angle += radar2map_angle;
+      // angle += (car2map_angle+(car2map_angle>=0? 0: 2*M_PI));
+
+      double map_vel_angle = std::atan2(trans_vel.y(),trans_vel.x());
+      map_vel_angle = map_vel_angle + (map_vel_angle >= 0 ? 0 : 2*M_PI);
+
+      // check the velocity direction
+      double vel_dir_dot = trans_pos.dot(trans_vel);
+      // velocity = velocity * (vel_dir_dot>=0 ? 1.0 : -1.0);
+
 
       RADAR_INFO("----------------------------------------------\n");
       RADAR_INFO(i<<"\tposition:("<<msg->points[i].longitude_dist<<","<<msg->points[i].lateral_dist<<")\n");
       RADAR_INFO("\tposition to map:("<<trans_pt.x()<<","<<trans_pt.y()<<","<<trans_pt.z()<<")\n");
-      RADAR_INFO("\tvel:"<<velocity<<"("<<msg->points[i].longitude_vel_comp<<","<<msg->points[i].lateral_vel_comp<<")\n\tdegree:"<<angle);
-      RADAR_INFO("\n\tinvalid_state:"<<msg->points[i].invalid_state);
-      RADAR_INFO("\n\tRCS value:"<<msg->points[i].rcs);
+      RADAR_INFO("\tvel:"<<velocity<<"("<<msg->points[i].longitude_vel_comp<<","<<msg->points[i].lateral_vel_comp<<")\tdegree:"<<vel_angle<<std::endl);
+      RADAR_INFO("\tmap vel:"<<trans_vel.length()<<"("<<trans_vel.x()<<", "<< trans_vel.y() << ")\tdegree:"<<map_vel_angle<<std::endl);
+      RADAR_INFO("\tRadar to Car degree:"<<radar2car_angle<<std::endl);
+      RADAR_INFO("\tRadar to Map degree:"<<radar2map_angle<<std::endl);
+      RADAR_INFO("\tCar to Map degree:"<<car2map_angle<<std::endl);
+      RADAR_INFO("\tRadar velocity world theta:"<<angle<<"("<<trans_pos.x()<<","<<trans_pos.y()<<")"<<std::endl);
+      // RADAR_INFO("\n\tinvalid_state:"<<msg->points[i].invalid_state);
+      // RADAR_INFO("\n\tRCS value:"<<msg->points[i].rcs);
       RADAR_INFO(endl);
 
       kf_tracker_point c;
@@ -2717,6 +3171,7 @@ void transform_radar_msg_to_cluster_data( const conti_radar::MeasurementConstPtr
       c.z_v = 0;
       c.vel_ang = angle;
       c.vel = velocity;
+      c.vel_dir = (vel_dir_dot>=0 ? true : false);
       c.cluster_id = -1;  // -1: not clustered
       c.visited = false;
       c.id = radar_id_count++;
@@ -2739,6 +3194,7 @@ void cluster_state(){
   if(firstFrame){
     dbpda_seg.set_parameter(cluster_eps, cluster_Nmin, cluster_history_frames, cluster_dt_weight);
     dbtrack_seg.set_parameter(cluster_eps, cluster_Nmin, cluster_history_frames, cluster_dt_weight);
+    dbtrack_seg.set_output_info(cluster_track_msg,motion_eq_optimizer_msg,rls_msg);
   }
   double CLUSTER_START, CLUSTER_END;
   if(cluster_type=="dbscan"){
@@ -2773,7 +3229,6 @@ void cluster_state(){
     dbtrack_seg.scan_num = call_back_num;
     dbtrack_seg.data_period = dt;
     std::vector< std::vector<kf_tracker_point> > dbtrack_cluster, dbtrack_cluster_current;
-    dbtrack_seg.output_info = output_dbscan_info;
     dbtrack_cluster_current = dbtrack_seg.cluster(cens);    // the current scan cluster result
     std::vector<int> cluster_tracking_result = dbtrack_seg.cluster_tracking_result(); // record the cluster-tracking id
     dbtrack_cluster.clear();
@@ -2790,6 +3245,7 @@ void cluster_state(){
     
     cens.clear();
     cens = dbtrack_seg.get_center();        // the cluster center based on the current points
+    rls_vel_marker(cens);
     
     // cluster visualization
     if(!viz_cluster_with_past){
@@ -2958,8 +3414,10 @@ void callback(const conti_radar::MeasurementConstPtr& in_msg){
     // check the Tracking exe performance
     double START_TIME, END_TIME;
     START_TIME = clock();
-    // KFT();
-    cluster_KFT(cluster_tracking_result_dbpda);
+    if(cluster_history_frames==1)
+      KFT();
+    else
+      cluster_KFT(cluster_tracking_result_dbpda);
     END_TIME = clock();
     EXE_INFO("\033[1;42mKFT Execution time: " << (END_TIME - START_TIME) / CLOCKS_PER_SEC << "s\033[0m");
     EXE_INFO(std::endl);
@@ -3197,6 +3655,9 @@ void annotation(const visualization_msgs::MarkerArrayConstPtr& label){
   repub.markers.shrink_to_fit();
   label_vec.clear();
   label_vec.shrink_to_fit();
+  // ready to track the annotation centers
+  std::vector<kf_tracker_point> gt_cens;
+
   for(int i=0;i<label->markers.size();i++){
     label_point label_pt;
     label_pt.type = label->markers.at(i).ns;
@@ -3223,16 +3684,7 @@ void annotation(const visualization_msgs::MarkerArrayConstPtr& label){
     label_pt.back_left = label_pt.pose * label_pt.back_left;
     label_pt.back_right = label_pt.pose * label_pt.back_right;
 
-    // tf::Quaternion label_q;
-    // tf::quaternionMsgToTF(label->markers.at(i).pose.orientation,label_q);
-    // label_pt.front_left = (label_transform * tf::Pose(label_q,tf::Vector3(label_pt.front_left.x(),label_pt.front_left.y(),label_pt.front_left.z()))).getOrigin();
-    // label_pt.front_left.setZ(0);
-    // label_pt.front_right = (label_transform * tf::Pose(label_q,tf::Vector3(label_pt.front_right.x(),label_pt.front_right.y(),label_pt.front_right.z()))).getOrigin();
-    // label_pt.front_right.setZ(0);
-    // label_pt.back_left = (label_transform * tf::Pose(label_q,tf::Vector3(label_pt.back_left.x(),label_pt.back_left.y(),label_pt.back_left.z()))).getOrigin();
-    // label_pt.back_left.setZ(0);
-    // label_pt.back_right = (label_transform * tf::Pose(label_q,tf::Vector3(label_pt.back_right.x(),label_pt.back_right.y(),label_pt.back_right.z()))).getOrigin();
-    // label_pt.back_right.setZ(0);
+    
 
     // label_pt.front_left = label_transform * label_pt.front_left;
     label_pt.front_left.setZ(0);
@@ -3243,6 +3695,26 @@ void annotation(const visualization_msgs::MarkerArrayConstPtr& label){
     // label_pt.back_right = label_transform * label_pt.back_right;
     label_pt.back_right.setZ(0);
 
+    kf_tracker_point gt_pt;
+    gt_pt.x = label_pt.pose.getOrigin().x();
+    gt_pt.y = label_pt.pose.getOrigin().y();
+    gt_pt.z = label_pt.pose.getOrigin().z();
+    // ROS_INFO("Label %d pose:(%f,%f,%f)",i,gt_pt.x,gt_pt.y,gt_pt.z);
+    // ROS_INFO("Label type: %s",label_pt.marker.ns.c_str());
+    gt_pt.x_v = gt_pt.y_v = gt_pt.z_v = 0;
+    gt_pt.cluster_id = i;
+    bool skip = false;
+    for(auto ns:score_skip_ns){
+      auto pos = label_pt.marker.ns.find(ns);
+      if(pos == label_pt.marker.ns.npos){
+        skip == true;
+        break;
+      }
+    }
+    if(!skip){
+      gt_cens.push_back(gt_pt);
+      // ROS_INFO("Keep");
+    }  
     // if(output_label_info){
     //   std::cout << "--------------------------------------\n";
     //   std::cout << "The " << i << "-th marker pose:\n";
@@ -3283,6 +3755,15 @@ void annotation(const visualization_msgs::MarkerArrayConstPtr& label){
     repub.markers.push_back(label_pt.marker);
   }
   get_label = true;
+  if(firstGTFrame){
+    for(auto gt_cen:gt_cens){
+      new_anno_track(gt_cen,gt_cen.cluster_id);
+    }
+    firstGTFrame = false;
+  }
+  else{
+    annotation_KFT(gt_cens);
+  }
   // repub_global.markers.clear();
   // repub_global = repub;
   // repub_global.markers.shrink_to_fit();
@@ -3352,9 +3833,12 @@ int main(int argc, char** argv){
   pub_cluster_center = nh.advertise<sensor_msgs::PointCloud2>("cluster_center",500);
   pub_cluster_pointcloud = nh.advertise<sensor_msgs::PointCloud2>("cluster_radar_front_pointcloud",500);
   pub_tracker_point = nh.advertise<sensor_msgs::PointCloud2>("tracker_point",500);
+  vis_vel_rls = nh.advertise<visualization_msgs::MarkerArray> ("radar_rls_v", 1);
   vis_vel_comp = nh.advertise<visualization_msgs::MarkerArray> ("radar_front_v_comp", 1);
   vis_tracking_vel = nh.advertise<visualization_msgs::MarkerArray> ("radar_tracking_v", 1);
   vis_vel = nh.advertise<visualization_msgs::MarkerArray> ("radar_front_v", 1);
+  vis_anno_vel = nh.advertise<visualization_msgs::MarkerArray> ("annotation_vel", 1);
+  pub_anno_trajectory = nh.advertise<visualization_msgs::MarkerArray> ("annotation_trajectory_path", 1);
   pub_trajectory = nh.advertise<visualization_msgs::MarkerArray> ("tracking_trajectory_path", 1);
   pub_trajectory_smooth = nh.advertise<visualization_msgs::MarkerArray> ("tracking_smooth_trajectory", 1);
   pub_pt = nh.advertise<visualization_msgs::MarkerArray> ("tracking_pt", 1);
@@ -3390,12 +3874,16 @@ int main(int argc, char** argv){
   nh.param<bool>("use_ego_callback"     ,use_ego_callback     ,false);
   nh.param<bool>("use_score_cluster"    ,use_score_cluster    ,false);
   nh.param<bool>("get_transformer"      ,get_transformer      ,false);
+  // cluster state parameters
   nh.param<string>("cluster_type"       ,cluster_type         ,"dbscan");
   nh.param<double>("eps"                ,cluster_eps          ,2.5);
   nh.param<int>("Nmin"                  ,cluster_Nmin         ,2);
   nh.param<int>("history_frames"        ,cluster_history_frames  ,3);
   nh.param<double>("cluster_dt_weight"  ,cluster_dt_weight    ,0.0);
   nh.param<bool>("viz_cluster_with_past",viz_cluster_with_past,true);
+  nh.param<bool>("cluster_track_msg"    ,cluster_track_msg    ,false);
+  nh.param<bool>("motion_eq_optimizer_msg",motion_eq_optimizer_msg,false);
+  nh.param<bool>("rls_msg"              ,rls_msg              ,false);
   
   ros::Subscriber marker_sub;
   marker_sub = nh.subscribe("lidar_label", 10, &annotation); // sub the nuscenes annotation
