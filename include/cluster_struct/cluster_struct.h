@@ -22,8 +22,9 @@ typedef struct tracker_point{
   float y_v;
   float z_v;
   float rcs;
-  double vel_ang;       // the angle(deg) of the radar point w.r.t. car frame
+  double vel_ang;       // the angle(deg) of the radar point w.r.t. map frame
   double vel;           // the velocity(m/s) of the radar point
+  bool vel_dir;         // true: leave, false: close
   int id;               // callback msg index
   int scan_time;        // callback time stamp
   int cluster_id;       // -1: not clustered
