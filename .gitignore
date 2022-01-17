@@ -1,5 +1,7 @@
 log/*
 cluster_score/2020*
 cluster_score/2021*
+cluster_score/2022*
 cluster_score/Average/*.csv
-.vscode/*
+.vscode/*.json
+rviz_config/*
