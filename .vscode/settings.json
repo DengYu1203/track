@@ -65,5 +65,6 @@
     "editor.tabSize": 2,
     "python.analysis.extraPaths": [
         "/opt/ros/kinetic/lib/python2.7/dist-packages"
-    ]
+    ],
+    "C_Cpp.errorSquiggles": "Enabled"
 }
