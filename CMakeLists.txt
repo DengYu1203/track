@@ -54,6 +54,18 @@ target_link_libraries(radar_track
   ${OpenCV_LIBRARIES}
 )
 
+add_executable(radar_cluster_ann
+   src/radar_cluster_ann.cpp
+   src/Hungarian.cpp
+   src/cluster_visual.cpp
+   src/dbtrack.cpp)
+
+target_link_libraries(radar_cluster_ann
+  ${catkin_LIBRARIES}
+  ${PCL_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+)
+
 add_executable(radar_track_itri
    src/radar_track_itri.cpp
    src/Hungarian.cpp
