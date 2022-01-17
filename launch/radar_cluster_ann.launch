@@ -1,0 +1,47 @@
+<launch>
+    <node pkg="track"             type="radar_cluster_ann"      name="radar_cluster_ann"      output="screen"/>
+        <param name="output_KFT_result"     value="false"/>
+        <param name="output_obj_id_result"  value="false"/>
+        <param name="output_radar_info"     value="false"/>
+        <param name="output_cluster_info"   value="false"/>
+        <param name="output_dbscan_info"    value="false"/>
+        <param name="output_DA_pair"        value="false"/>
+        <param name="output_exe_time"       value="true"/>
+        <param name="output_label_info"     value="false"/>
+        <param name="output_ego_vel_info"   value="false"/>
+        <param name="output_transform_info" value="false"/>
+        <param name="output_gt_pt_info"     value="false"/>
+        <param name="DA_method"             value="false"/>
+        <param name="use_KFT_module"        value="true"/>
+        <param name="show_stopObj_id"       value="false"/>
+        <param name="kft_id_num"            value="2"/>
+        <param name="show_vel_marker"       value="true"/>
+        <param name="use_ego_callback"      value="false"/>
+        <param name="use_5_radar"           value="false"/>
+        <param name="get_transformer"       value="true"/>
+        
+        <!-- Set Cluster Algo and parameters -->
+        <param name="cluster_type"          value="dbtrack"/>
+        <!-- Usual Scenes setting -->
+        <!-- <param name="eps"                   value="1.8"/> -->
+        <!-- log34 multiple vehicles setting -->
+        <param name="eps"                       value="1.0"/>
+        <!-- <param name="eps"                       value="1.5"/> -->
+        <!-- <param name="eps"                       value="2.0"/> -->
+
+        <param name="Nmin"                      value="2"/>
+        <param name="history_frames"            value="10"/>
+        <param name="cluster_dt_weight"         value="1.5"/>
+        <param name="viz_cluster_with_past"     value="true"/>
+        <param name="cluster_track_msg"         value="false"/>
+        <param name="motion_eq_optimizer_msg"   value="false"/>
+        <param name="rls_msg"                   value="false"/>
+        
+        <!-- Cluster Score -->
+        <param name="write_out_score_file"  value="true"/>
+        <param name="use_score_cluster"     value="true"/>
+        <param name="output_score_info"     value="false"/>
+        <param name="output_score_mat_info" value="false"/>
+
+    <param name="use_sim_time" value="true"/>
+</launch>
