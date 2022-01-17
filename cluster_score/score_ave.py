@@ -6,10 +6,10 @@ import numpy as np
 code_path = os.path.dirname(os.path.realpath(__file__))
 
 current_files = os.listdir(code_path)
-current_files.sort(reverse = True)
-# print(current_files)
-read_fold_name = '2021-Jan-15'
-# read_fold_name = current_files[3]   # 0:score_ave.py, 1: center.py, 2: Average folder
+current_files.sort(reverse = True, key=os.path.getmtime)
+current_files = list(filter(lambda x: '-' in x,current_files))
+# read_fold_name = '2021-Nov-29'
+read_fold_name = current_files[0]   # 0:score_ave.py, 1: center.py, 2: Average folder
 input_dir = os.path.join(code_path,read_fold_name)
 
 ignore_name = ['log1']
@@ -26,7 +26,7 @@ def csv_write(output_list):
     under_ave_count = 0
     csv_path = os.path.join(output_dir,read_fold_name+'.csv')
     # the first row of the csv file
-    csv_first_row = ['File Name','Total Frames','Total Objects','Good Objects','Multiple Objects','No Objects','V measure score','Homogeneity','H(C|K)','H(C)','Completeness','H(K|C)','H(K)']
+    csv_first_row = ['File Name','Total Frames','Total Objects','Correct Objects','Over Objects','Under Objects','No Objects','V measure score','Homogeneity','H(C|K)','H(C)','Completeness','H(K|C)','H(K)','Ｓcene Num','Ave vel']
     ave_row =[]
     with open(csv_path,'w',newline='') as csvfile:
         writer = csv.writer(csvfile)
@@ -38,10 +38,12 @@ def csv_write(output_list):
         # print(col_sum)
         ave_row.append(str(int(col_sum[0])))
         ave_row.append(int(col_sum[1]))
-        ave_row.append(int(col_sum[2]))
-        ave_row.append(int(col_sum[3]))
-        ave_row.append(int(col_sum[4]))
-        col_sum = np.dot(output_array[:,0].reshape(1,len(output_array[:,0])),output_array[:,5:]) / int(col_sum[0])
+        # ave_row.append(float(col_sum[2]))
+        # ave_row.append(float(col_sum[3]))
+        # ave_row.append(float(col_sum[4]))
+        # ave_row.append(float(col_sum[5]))
+        # col_sum = np.dot(output_array[:,0].reshape(1,len(output_array[:,0])),output_array[:,6:]) / int(col_sum[0])
+        col_sum = np.dot(output_array[:,0].reshape(1,len(output_array[:,0])),output_array[:,2:]) / int(col_sum[0])
         # print(col_sum)
         for i in range(len(col_sum[0])):
             ave_row.append(col_sum[0,i])
@@ -58,8 +60,8 @@ def csv_write(output_list):
             #     print(data[0])
                 # under_ave_count += 1
     # print('\033[1;94m'+str(under_ave_count)+' files below the average (total '+str(len(output_list))+' files)'+'\033[0m')
-    print(csv_first_row[0:7])
-    print(ave_row[0:7])
+    print(csv_first_row[0:8])
+    print(ave_row[0:8])
     return
 
 def ignore_file(filename):
@@ -86,6 +88,7 @@ def csv_read():
             obj_num = []
             good_num = []
             multi_num = []
+            under_mum = []
             no_num = []
             v_measure_score = []
             homo = []
@@ -94,6 +97,8 @@ def csv_read():
             comp = []
             h_kc = []
             h_k = []
+            scene_num = []
+            ave_vel =[]
             first = True
             for row in rows:
                 if first:
@@ -104,26 +109,31 @@ def csv_read():
                 obj_num.append(int(row[1]))
                 good_num.append(int(row[2]))
                 multi_num.append(int(row[3]))
-                no_num.append(int(row[4]))
-                v_measure_score.append(float(row[5]))
-                homo.append(float(row[6]))
-                h_ck.append(float(row[7]))
-                h_c.append(float(row[8]))
-                comp.append(float(row[9]))
-                h_kc.append(float(row[10]))
-                h_k.append(float(row[11]))
+                under_mum.append(int(row[4]))
+                no_num.append(int(row[5]))
+                v_measure_score.append(float(row[6]))
+                homo.append(float(row[7]))
+                h_ck.append(float(row[8]))
+                h_c.append(float(row[9]))
+                comp.append(float(row[10]))
+                h_kc.append(float(row[11]))
+                h_k.append(float(row[12]))
+                scene_num.append(int(row[13]))
+                ave_vel.append(float(row[14]))
             if len(v_measure_score) < 1:
                 if not Error_csv:
                     Error_csv = True
                     print('\033[1;95m'+'Files Contain nan '+'\033[0m')
                 print('\033[m'+str(filename)+'\033[0m')
                 continue
-            v_measure_score_list.append(str(filename))
+            split_filename = filename.split('_')
+            v_measure_score_list.append(str(split_filename[2])+'_'+str(split_filename[4].split('.')[0])+'_'+str(split_filename[0])+'_'+str(split_filename[1]))
             v_measure_score_list.append(len(v_measure_score))
             v_measure_score_list.append(sum(obj_num))
-            v_measure_score_list.append(sum(good_num))
-            v_measure_score_list.append(sum(multi_num))
-            v_measure_score_list.append(sum(no_num))
+            v_measure_score_list.append(sum(good_num)/sum(obj_num))
+            v_measure_score_list.append(sum(multi_num)/sum(obj_num))
+            v_measure_score_list.append(sum(under_mum)/sum(obj_num))
+            v_measure_score_list.append(sum(no_num)/sum(obj_num))
             v_measure_score_list.append(sum(v_measure_score) / len(v_measure_score))
             v_measure_score_list.append(sum(homo) / len(homo))
             v_measure_score_list.append(sum(h_ck) / len(h_ck))
@@ -131,9 +141,12 @@ def csv_read():
             v_measure_score_list.append(sum(comp) / len(comp))
             v_measure_score_list.append(sum(h_kc) / len(h_kc))
             v_measure_score_list.append(sum(h_k) / len(h_k))
+            v_measure_score_list.append(sum(scene_num) / len(scene_num))
+            v_measure_score_list.append(sum(ave_vel) / len(ave_vel))
             output_list.append(v_measure_score_list)
     csv_write(output_list)
     return
 
 if __name__ == '__main__':
     csv_read()
+    # print(current_files)
