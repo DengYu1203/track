@@ -5,3 +5,4 @@ cluster_score/2022*
 cluster_score/Average/*.csv
 .vscode/*.json
 rviz_config/*
+dbscan_parameter/log*
