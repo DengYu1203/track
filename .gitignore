@@ -6,3 +6,4 @@ cluster_score/Average/*.csv
 .vscode/*.json
 rviz_config/*
 src/dbscan_parameter/log*
+src/dbscan_parameter/train_list.txt
