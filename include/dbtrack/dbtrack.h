@@ -20,6 +20,10 @@
 
 #include <map>
 
+// save/load file
+#include <fstream>
+#include <boost/filesystem.hpp>
+
 using namespace std;
 
 typedef struct dbtrack_neighbor_info
@@ -89,8 +93,8 @@ class dbtrack
     double vel_scale;
     FRAME_STATE frame_state;
     pcl::KdTreeFLANN<pcl::PointXYZ> kdtree;             // k-d tree with x,y,vel
-    dbtrack_neighbor_info find_neighbors(cluster_point p);
-    void expand_neighbor(std::vector< cluster_point > &process_data, std::vector<int> &temp_cluster, int core_index);
+    dbtrack_neighbor_info find_neighbors(cluster_point p, dbtrack_para *Optional_para=NULL);
+    void expand_neighbor(std::vector< cluster_point > &process_data, std::vector<int> &temp_cluster, int core_index, std::vector<dbtrack_para> *Optional_para=NULL);
     double distance(cluster_point p1, cluster_point p2);
     void split_past(std::vector< cluster_point > process_data, std::vector< std::vector<int> > &final_cluster_order);
     void split_past_new(std::vector< cluster_point > process_data, std::vector< std::vector<int> > &final_cluster_order);
@@ -135,8 +139,50 @@ class dbtrack
     std::map<int,rls_est> tracker_vel_map;
     void updateTrackerVelocity(std::vector<std::vector<cluster_point>> cluster_result, std::vector<int> tracker_idx);
     void RLS_vel(std::vector<cluster_point> cluster_group, rls_est &rls_v, Eigen::Vector2d ref_vel);
+    // Modified DBSCAN
+    std::vector<pcl::PointCloud<pcl::PointXYZ>::Ptr> input_cloud_vec;   // record the point cloud as vector with size: accumulated frame numbers
+
+    /*
+     *  Learning DBSCAN Parameter
+     */
+    std::string parameter_path; // save/load the parameter path
+    std::string para_dataload = "dbtrack_parameter.csv";  // parameter filename
+    boost::filesystem::path dbscan_para_path;  // the complete parameter path
+    bool parameter_training = true; // true: learning parameters, false: using parameters
+    bool use_dbscan_training_para = true;  // true: use the training parameters, false use the default parameters
+    void check_path(std::string path);
+    void save_parameter(Eigen::MatrixXd parameter_matrix, std::string filepath, bool appendFlag=true);
+    Eigen::MatrixXd load_parameter(std::string filepath);
+    Eigen::MatrixXd dbscan_parameter_matrix;
+    int radarInput_scanTime = -1;
+    std::string training_scene_name;
+    bool training_scene_flag = false; // true: append the radar input vector, false: rewrite new file
+    void trainingInit();
+    void trainingCluster(std::vector<cluster_point> data, bool skip);
+    double trainingOptimize(std::vector< cluster_point > &process_data,
+                          std::vector<dbtrack_para> &trainParameterVec,
+                          std::vector< std::vector<cluster_point*> > &clusterVec,
+                          std::map< int,std::vector<cluster_point*> > &trackMap);
+    std::vector< std::vector<int> > trainingDBSCAN(std::vector< cluster_point > &process_data,
+                                                   std::vector<dbtrack_para> &trainParameterVec);
+    typedef struct Score{
+      int frame;
+      int object_num = 0;
+      int good_cluster = 0;   // good cluster in gt
+      int multi_cluster = 0;  // multiple clusters in one gt
+      int under_cluster =0;    // cluster cover over than one gt
+      int no_cluster = 0; // no cluster in gt
+      double v_measure_score = 0;
+      double homo = 0;
+      double h_ck = 0;
+      double h_c = 0;
+      double comp = 0;
+      double h_kc = 0;
+      double h_k = 0;
+    }clusterScore;
+    double cluster_score(std::vector<std::vector<cluster_point>>GroundTruthCluster, std::vector<std::vector<cluster_point>>ResultCluster, double beta=1.0);
   public:
-    dbtrack(double eps=2.5, int Nmin=2);
+    dbtrack(double eps=1.5, int Nmin=2);
     ~dbtrack();
     // Modify the DBSCAN Algo
     std::vector< std::vector<cluster_point> > improve_cluster(std::vector<cluster_point> data);
@@ -149,6 +195,9 @@ class dbtrack
     std::vector<int> cluster_tracking_result();
     void set_parameter(double eps, int Nmin, int frames_num, double dt_weight);
     void set_output_info(bool cluster_track_msg, bool motion_eq_optimizer_msg, bool rls_msg);
+    void training_dbtrack_para(bool training_, std::string filepath="/home/user/deng/catkin_deng/src/track/src/dbscan_parameter"); // decide to train the parameter or not and give the filepath
+    void get_training_name(std::string scene_name); // get bag name
+    void get_gt_cluster(std::vector< std::vector<cluster_point> > gt_cluster);
     int scan_num;
     double data_period;
     double dt_threshold_vel;  // use for the vel_function to decide the vel weight with scan difference
