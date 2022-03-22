@@ -393,6 +393,8 @@ bool rls_msg = false;
 
 // DBTRACK init
 dbtrack dbtrack_seg;
+bool dbtrack_para_train = false;
+bool dbtrack_para_train_direct = false;
 
 // past radars
 bool show_past_points = true;
@@ -457,7 +459,7 @@ typedef struct track{
 std::vector<track> filters;
 std::vector<track> anno_filters;  // the annotation tracking filters
 std::vector<int> anno_obj_id;    // record the current scan points' cluster tracking id
-std::vector< std::vector<cluster_point> > gt_cluster_vec;  // the vector contains the gt cluster result
+// std::vector< std::vector<cluster_point> > gt_cluster_vec;  // the vector contains the gt cluster result
 std::vector<string> anno_token;
 Json::Value anno_root;
 int anno_root_idx = 0;
@@ -1463,7 +1465,7 @@ void show_trajectory(){
 }
 
 // show the past radar points with colors
-void show_past_radar_points_with_color(std::vector<bool> cluster_tracking_bool_vec){
+void show_past_radar_points_with_color(){
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr history_filter_points_rgb(new pcl::PointCloud<pcl::PointXYZRGB>);
   sensor_msgs::PointCloud2::Ptr history_filter_cloud(new sensor_msgs::PointCloud2);
   for(int i=0;i<past_radars_with_cluster.size();i++){
@@ -1857,7 +1859,7 @@ void cluster_KFT(std::vector<int> cluster_tracking_result){
 
   marker_id(false,obj_id,marker_obj_id,tracking_frame_obj_id);       // publish all id
   show_trajectory();
-  show_past_radar_points_with_color(cluster_tracking_bool_vec);
+  show_past_radar_points_with_color();
   
 ///////////////////////////////////////////////////estimate
 
@@ -2210,7 +2212,7 @@ void KFT(void)
   // marker_id(false,marker_obj_id);   // publish the "tracking" id
   marker_id(false,obj_id,marker_obj_id,tracking_frame_obj_id);       // publish all id
   show_trajectory();
-  show_past_radar_points_with_color(cluster_tracking_bool_vec);
+  show_past_radar_points_with_color();
   
 ///////////////////////////////////////////////////estimate
 
@@ -2715,6 +2717,7 @@ void score_cluster(std::vector<kf_tracker_point> score_cens, std::vector< std::v
   sensor_msgs::PointCloud2::Ptr gt_cloud(new sensor_msgs::PointCloud2);
   gt_pointcloud->clear();
 
+  std::vector< std::vector<cluster_point> > current_gt_cluster;
   for(int i=0;i<label_idx_vec.size();i++){
     std::vector<cluster_point> ground_truth_cluster = gt_cluster.at(i);
     string instance_token_str = anno_root[anno_root_idx]["annotation"][label_idx_vec.at(i)]["instance_token"].asString();
@@ -2723,8 +2726,10 @@ void score_cluster(std::vector<kf_tracker_point> score_cens, std::vector< std::v
     for(auto &it:anno_filters){
       if(it.uuid == gt_tracking_id){
         it.cluster_pc.insert(it.cluster_pc.end(),ground_truth_cluster.begin(),ground_truth_cluster.end());
-        
-        for(auto gt_cluster_pt:it.cluster_pc){
+        it.cluster_idx = gt_tracking_id;
+        for(auto &gt_cluster_pt:it.cluster_pc){
+          gt_cluster_pt.tracking_id = gt_tracking_id;
+          gt_cluster_pt.scan_time = call_back_num;
           if(call_back_num-gt_cluster_pt.scan_time>10)
             continue;
           pcl::PointXYZI pt;
@@ -2734,15 +2739,19 @@ void score_cluster(std::vector<kf_tracker_point> score_cens, std::vector< std::v
           pt.intensity = gt_tracking_id;
           gt_pointcloud->push_back(pt);
         }
+        current_gt_cluster.push_back(it.cluster_pc);
         break;
       }
     }
-    
   }
   pcl::toROSMsg(*gt_pointcloud,*gt_cloud);
   gt_cloud->header.frame_id = MAP_FRAME;
   gt_cloud->header.stamp = label_vec.at(0).marker.header.stamp;
   pub_anno_cluster.publish(gt_cloud);
+  // pass the ground truth cluster to DBSCAN training
+  if(dbtrack_para_train){
+    dbtrack_seg.get_gt_cluster(current_gt_cluster);
+  }
 }
 
 void transform_radar_msg_to_cluster_data( const conti_radar::MeasurementConstPtr& msg, int &radar_point_size, int &radar_id_count,
@@ -2764,7 +2773,8 @@ void transform_radar_msg_to_cluster_data( const conti_radar::MeasurementConstPtr
     std::list<int>::iterator invalid_state_it;
     invalid_state_it = std::find(invalid_state.begin(),invalid_state.end(),msg->points[i].invalid_state);
     // remove the invalid state points
-    if(invalid_state_it!=invalid_state.end() || range > filter_out_msg_range){
+    // if(invalid_state_it!=invalid_state.end() || range > filter_out_msg_range){
+    if(invalid_state_it!=invalid_state.end()){
       radar_point_size--;
     }
     else{
@@ -2823,6 +2833,7 @@ void transform_radar_msg_to_cluster_data( const conti_radar::MeasurementConstPtr
       c.x = trans_pt.x();
       c.y = trans_pt.y();
       c.z = trans_pt.z();
+      c.r = range;
       c.x_v = trans_vel.x();
       c.y_v = trans_vel.y();
       c.z_v = 0;
@@ -2830,6 +2841,7 @@ void transform_radar_msg_to_cluster_data( const conti_radar::MeasurementConstPtr
       c.vel = velocity;
       c.vel_dir = (vel_dir_dot>=0 ? true : false);
       c.cluster_id = -1;  // -1: not clustered
+      c.tracking_id = -1; // -1: not be tracked
       c.visited = false;
       c.id = radar_id_count++;
       c.scan_time = call_back_num;
@@ -2851,7 +2863,7 @@ void cluster_state(){
   if(firstFrame){
     dbtrack_seg.set_parameter(cluster_eps, cluster_Nmin, cluster_history_frames, cluster_dt_weight);
     dbtrack_seg.set_output_info(cluster_track_msg,motion_eq_optimizer_msg,rls_msg);
-    dbtrack_seg.training_dbtrack_para(true);
+    // dbtrack_seg.training_dbtrack_para(dbtrack_para_train);
   }
   double CLUSTER_START, CLUSTER_END;
   CLUSTER_START = clock();
@@ -2998,7 +3010,10 @@ void callback(const conti_radar::MeasurementConstPtr& in_msg){
     ROS_WARN("No Valid Cluster Radar points In This Frame!");
     return;
   }
-
+  if(dbtrack_para_train){
+    firstFrame = false;
+    return;
+  }
   if(use_KFT_module){
     if( firstFrame ){
       ROS_INFO("Initialize the KFT Tracking");
@@ -3308,7 +3323,7 @@ void get_bag_info_callback(const rosgraph_msgs::LogConstPtr& log_msg){
     int bag_start = score_file_name.find("log");
     int bag_end = score_file_name.find(".");
     score_file_name = score_file_name.substr(bag_start,bag_end-bag_start);
-
+    dbtrack_seg.get_training_name(score_file_name);
     int scene_name_start = score_file_name.find("scene");
     string scene_name = score_file_name.substr(scene_name_start,score_file_name.length()-scene_name_start);
     read_tracking_info(scene_name);
@@ -3384,6 +3399,8 @@ int main(int argc, char** argv){
   nh.param<bool>("get_transformer"      ,get_transformer      ,false);
   // cluster state parameters
   nh.param<string>("cluster_type"       ,cluster_type         ,"dbscan");
+  nh.param<bool>("dbtrack_para_train"   ,dbtrack_para_train   ,false);
+  nh.param<bool>("dbtrack_para_train_direct"   ,dbtrack_para_train_direct   ,false);
   nh.param<double>("eps"                ,cluster_eps          ,2.5);
   nh.param<int>("Nmin"                  ,cluster_Nmin         ,2);
   nh.param<int>("history_frames"        ,cluster_history_frames  ,3);
@@ -3405,6 +3422,10 @@ int main(int argc, char** argv){
   }
   else{
     sub_ = nh.subscribe("/radar_front",1,&callback);
+    get_radar_transform_check = {0};
+    radar_transform.resize(1);
+    radar_to_map_transform.resize(1);
+    frame_list = {"nuscenes_radar_front"};
   }
   
 
@@ -3451,6 +3472,22 @@ int main(int argc, char** argv){
 
   while(ros::ok()){
     ros::spinOnce();
+    // train DBSCAN parameter directly
+    if(dbtrack_para_train_direct){
+      dbtrack_seg.data_period = dt;
+      dbtrack_seg.set_parameter(cluster_eps, cluster_Nmin, cluster_history_frames, cluster_dt_weight);
+      dbtrack_seg.set_output_info(cluster_track_msg,motion_eq_optimizer_msg,rls_msg);
+      dbtrack_seg.training_dbtrack_para(dbtrack_para_train_direct);
+      // visualize the training result
+      std::vector< std::vector<kf_tracker_point> > dbtrack_cluster = dbtrack_seg.cluster_with_past_now();
+      std::vector<int> cluster_tracking_result = dbtrack_seg.cluster_tracking_result();
+      past_radars_with_cluster.clear();
+      past_radars_with_cluster = dbtrack_seg.get_history_points_with_cluster_order();
+      color_cluster(dbtrack_cluster,true,cluster_tracking_result);
+      polygon_cluster_visual(dbtrack_cluster);
+      show_past_radar_points_with_color();
+      dbtrack_para_train_direct = false;
+    }
     pub_marker.publish(m_s);
   }
   return 0;
