@@ -25,8 +25,8 @@
         <!-- Usual Scenes setting -->
         <!-- <param name="eps"                   value="1.8"/> -->
         <!-- log34 multiple vehicles setting -->
-        <param name="eps"                       value="1.0"/>
-        <!-- <param name="eps"                       value="1.5"/> -->
+        <!-- <param name="eps"                       value="1.0"/> -->
+        <param name="eps"                       value="1.5"/>
         <!-- <param name="eps"                       value="2.0"/> -->
 
         <param name="Nmin"                      value="2"/>
@@ -36,6 +36,9 @@
         <param name="cluster_track_msg"         value="false"/>
         <param name="motion_eq_optimizer_msg"   value="false"/>
         <param name="rls_msg"                   value="false"/>
+        <!-- DBSCAN Training Parameter Flag -->
+        <param name="dbtrack_para_train"        value="true"/>
+        <param name="dbtrack_para_train_direct" value="true"/>
         
         <!-- Cluster Score -->
         <param name="write_out_score_file"  value="true"/>
