@@ -26,108 +26,7 @@ dbtrack::~dbtrack(){}
  * Output: The current radar cluster result
  */
 std::vector< std::vector<cluster_point> > dbtrack::cluster(std::vector<cluster_point> data){
-  input_cloud->clear();
-  points_history.push_back(data);
-  if(points_history.size()>history_frame_num){
-    points_history.erase(points_history.begin());
-  }
-  cluster_queue.clear();
-  cluster_queue.shrink_to_fit();
-  // ready to process the cluster points
-  std::vector< cluster_point > process_data;
-
-  for(int i=0;i<points_history.size();i++){
-    for(int j=0;j<points_history.at(i).size();j++){
-      pcl::PointXYZ temp_pt;
-      temp_pt.x = points_history.at(i).at(j).x;
-      temp_pt.y = points_history.at(i).at(j).y;
-      temp_pt.z = vel_function(points_history.at(i).at(j).vel, scan_num - points_history.at(i).at(j).scan_time);
-      input_cloud->points.push_back(temp_pt);
-      process_data.push_back(points_history.at(i).at(j));
-      // initialize the reachable_dist
-      dbtrack_info cluster_pt;
-      cluster_pt.reachable_dist = -1; // undefined distance
-      cluster_queue.push_back(cluster_pt);
-    }
-  }
-  tracker_core_begin_index = process_data.size();
-  if(tracker_core_flag && tracker_cores.size()>0){
-    std::cout << "Tracker core index: " << tracker_core_begin_index << std::endl;
-    for(auto core=tracker_cores.begin();core!=tracker_cores.end();core++){
-      if(core->second.hitsory.size()<5)
-        continue;
-      pcl::PointXYZ temp_pt;
-      temp_pt.x = core->second.point.x;
-      temp_pt.y = core->second.point.y;
-      temp_pt.z = vel_function(core->second.point.vel, scan_num - core->second.point.scan_time);
-      input_cloud->points.push_back(temp_pt);
-      process_data.push_back(core->second.point);
-      // initialize the reachable_dist
-      dbtrack_info cluster_pt;
-      cluster_pt.reachable_dist = -1; // undefined distance
-      cluster_queue.push_back(cluster_pt);
-      std::cout << "Add Tracking Core point:(" << core->second.point.x << ", "
-                                               << core->second.point.y << ")";
-      std::cout << "\tVelocity: " << core->second.point.vel;
-      std::cout << "\tTracking ID: " << core->first << ", hit: " << core->second.hitsory.size() << std::endl;
-    }
-  }
-
-
-
-
-  
-  // Set the kd-tree input
-  kdtree.setInputCloud(input_cloud);
-
-  std::cout << "DBTRACK Cluster points size : " << data.size() << "/" << process_data.size() << "(" << points_history.size() << " frames)" << std::endl;
-  std::vector< std::vector<int> > final_cluster_order;
-    
-  // DBSCAN cluster
-  for(int i=0;i<process_data.size();i++){
-    // check if the pt has been visited
-    if(process_data.at(i).visited)
-      continue;
-    else if(process_data.at(i).noise_detect.size()>=noise_point_frame){
-      process_data.at(i).visited = true;
-      continue;
-    }
-    else
-      process_data.at(i).visited = true;
-    std::vector<int> temp_cluster;
-    
-    // find neighbor and get the core distance
-    cluster_queue.at(i).neighbor_info = find_neighbors(process_data.at(i));
-    temp_cluster.push_back(i);
-    // satisfy the Nmin neighbors (!= 0: find all cluster even the single point;>=Nmin : remove the noise)
-    if(cluster_queue.at(i).neighbor_info.pointIdxNKNSearch.size() != 0){
-      cluster_queue.at(i).core_dist = std::sqrt(*std::max_element(cluster_queue.at(i).neighbor_info.pointNKNSquaredDistance.begin(),
-                                                cluster_queue.at(i).neighbor_info.pointNKNSquaredDistance.end()));
-      if(process_data.at(i).noise_detect.size()==0)
-        expand_neighbor(process_data, temp_cluster, i);
-      // final_cluster_order.push_back(temp_cluster); // filter out the outlier that only contains one point in one cluster
-    }
-    else{
-      cluster_queue.at(i).core_dist = -1;      // undefined distance (not a core point)
-    }
-    final_cluster_order.push_back(temp_cluster);    // push the cluster that contains only one point to the final cluster result
-  }
-    
-  std::vector< std::vector<cluster_point> > cluster_result;
-  // split_past(process_data, final_cluster_order);
-  split_past_new(process_data, final_cluster_order);
-  // for(int i=0;i<final_cluster_order.size();i++){
-  //   std::vector<cluster_point> temp_cluster_unit;
-  //   for(int j=0;j<final_cluster_order.at(i).size();j++){
-  //     temp_cluster_unit.push_back(process_data.at(final_cluster_order.at(i).at(j)));
-  //   }
-  //   cluster_result.push_back(temp_cluster_unit);
-  // }
-  // cluster center is calculated from the merge_cluster() function
-  // cluster_center(cluster_result);
-  cluster_result = current_final_cluster_vec;
-
-  return cluster_result;
+  return improve_cluster(data);
 }
 
 void dbtrack::cluster_track(std::vector< cluster_point > process_data, std::vector< std::vector<int> > final_cluster_order){
@@ -772,7 +671,7 @@ double dbtrack::distance(cluster_point p1, cluster_point p2){
   return d.norm();
 }
 
-dbtrack_neighbor_info dbtrack::find_neighbors(cluster_point p){
+dbtrack_neighbor_info dbtrack::find_neighbors(cluster_point p, dbtrack_para *Optional_para){
   pcl::PointXYZ search_pt;
   search_pt.x = p.x;
   search_pt.y = p.y;
@@ -780,9 +679,15 @@ dbtrack_neighbor_info dbtrack::find_neighbors(cluster_point p){
 
   // find the eps radius neighbors
   dbtrack_neighbor_info info;
-  // info.search_radius = dbtrack_param.eps;
-  info.search_radius = dbtrack_param.eps + p.vel*data_period; // consider the velocity into the distance search
-  info.search_k = dbtrack_param.Nmin;
+  if(Optional_para == NULL){
+    // info.search_radius = dbtrack_param.eps;
+    info.search_radius = dbtrack_param.eps + p.vel*data_period; // consider the velocity into the distance search
+    info.search_k = dbtrack_param.Nmin;
+  }
+  else{
+    info.search_radius = Optional_para->eps + p.vel*data_period;
+    info.search_k = Optional_para->Nmin;
+  }
   // find the eps neighbors
   if(kdtree.radiusSearch(search_pt,info.search_radius,info.pointIdxRadiusSearch,info.pointRadiusSquaredDistance) >= info.search_k){
     // for (size_t i = 0; i < info.pointIdxRadiusSearch.size (); ++i){
@@ -805,7 +710,7 @@ dbtrack_neighbor_info dbtrack::find_neighbors(cluster_point p){
   return info;
 }
 
-void dbtrack::expand_neighbor(std::vector< cluster_point > &process_data, std::vector<int> &temp_cluster, int core_index){
+void dbtrack::expand_neighbor(std::vector< cluster_point > &process_data, std::vector<int> &temp_cluster, int core_index, std::vector<dbtrack_para> *Optional_para){
   for(int i=0;i<cluster_queue.at(core_index).neighbor_info.pointIdxRadiusSearch.size();i++){
     int neighbor_index = cluster_queue.at(core_index).neighbor_info.pointIdxRadiusSearch.at(i);
     if(process_data.at(neighbor_index).visited)
@@ -818,12 +723,15 @@ void dbtrack::expand_neighbor(std::vector< cluster_point > &process_data, std::v
     else
       process_data.at(neighbor_index).visited = true;
     temp_cluster.push_back(neighbor_index);
-    cluster_queue.at(neighbor_index).neighbor_info = find_neighbors(process_data.at(neighbor_index));
+    if(Optional_para!=NULL)
+      cluster_queue.at(neighbor_index).neighbor_info = find_neighbors(process_data.at(neighbor_index), &Optional_para->at(neighbor_index));
+    else
+      cluster_queue.at(neighbor_index).neighbor_info = find_neighbors(process_data.at(neighbor_index));
     if(cluster_queue.at(neighbor_index).neighbor_info.pointIdxNKNSearch.size() != 0){
       cluster_queue.at(neighbor_index).core_dist = std::sqrt(*std::max_element(cluster_queue.at(neighbor_index).neighbor_info.pointNKNSquaredDistance.begin(),
                                                 cluster_queue.at(neighbor_index).neighbor_info.pointNKNSquaredDistance.end()));
       if(process_data.at(neighbor_index).noise_detect.size()==0)
-        expand_neighbor(process_data, temp_cluster, neighbor_index);
+        expand_neighbor(process_data, temp_cluster, neighbor_index, Optional_para);
     }
     else{
         cluster_queue.at(neighbor_index).core_dist = -1;      // undefined distance (not a core point)
@@ -1036,56 +944,34 @@ void dbtrack::set_output_info(bool cluster_track_msg, bool motion_eq_optimizer_m
 }
 
 std::vector< std::vector<cluster_point> > dbtrack::improve_cluster(std::vector<cluster_point> data){
-  input_cloud->clear();
-  points_history.push_back(data);
-  if(points_history.size()>history_frame_num){
-    points_history.erase(points_history.begin());
-  }
   cluster_queue.clear();
   cluster_queue.shrink_to_fit();
   // ready to process the cluster points
+  pcl::PointCloud<pcl::PointXYZ>::Ptr current_pc = pcl::PointCloud<pcl::PointXYZ>().makeShared();
+  for(auto pt:data){
+    pcl::PointXYZ temp_pt;
+    temp_pt.x = pt.x;
+    temp_pt.y = pt.y;
+    temp_pt.z = vel_function(pt.vel,scan_num-pt.scan_time);
+    current_pc->points.push_back(temp_pt);
+  }
+  input_cloud_vec.push_back(current_pc);
+  points_history.push_back(data);
+  if(points_history.size()>history_frame_num){
+    points_history.erase(points_history.begin());
+    input_cloud_vec.erase(input_cloud_vec.begin());
+  }
   std::vector< cluster_point > process_data;
-
+  input_cloud->clear();
   for(int i=0;i<points_history.size();i++){
-    for(int j=0;j<points_history.at(i).size();j++){
-      pcl::PointXYZ temp_pt;
-      temp_pt.x = points_history.at(i).at(j).x;
-      temp_pt.y = points_history.at(i).at(j).y;
-      temp_pt.z = vel_function(points_history.at(i).at(j).vel, scan_num - points_history.at(i).at(j).scan_time);
-      input_cloud->points.push_back(temp_pt);
-      process_data.push_back(points_history.at(i).at(j));
-      // initialize the reachable_dist
-      dbtrack_info cluster_pt;
-      cluster_pt.reachable_dist = -1; // undefined distance
-      cluster_queue.push_back(cluster_pt);
-    }
+    process_data.insert(process_data.end(),points_history.at(i).begin(),points_history.at(i).end());
+    *input_cloud += *input_cloud_vec.at(i);
   }
+  dbtrack_info cluster_pt;
+  cluster_pt.reachable_dist = -1; // undefined distance
+  cluster_queue.assign(process_data.size(),cluster_pt);
+
   tracker_core_begin_index = process_data.size();
-  if(tracker_core_flag && tracker_cores.size()>0){
-    std::cout << "Tracker core index: " << tracker_core_begin_index << std::endl;
-    for(auto core=tracker_cores.begin();core!=tracker_cores.end();core++){
-      if(core->second.hitsory.size()<5)
-        continue;
-      pcl::PointXYZ temp_pt;
-      temp_pt.x = core->second.point.x;
-      temp_pt.y = core->second.point.y;
-      temp_pt.z = vel_function(core->second.point.vel, scan_num - core->second.point.scan_time);
-      input_cloud->points.push_back(temp_pt);
-      process_data.push_back(core->second.point);
-      // initialize the reachable_dist
-      dbtrack_info cluster_pt;
-      cluster_pt.reachable_dist = -1; // undefined distance
-      cluster_queue.push_back(cluster_pt);
-      std::cout << "Add Tracking Core point:(" << core->second.point.x << ", "
-                                               << core->second.point.y << ")";
-      std::cout << "\tVelocity: " << core->second.point.vel;
-      std::cout << "\tTracking ID: " << core->first << ", hit: " << core->second.hitsory.size() << std::endl;
-    }
-  }
-
-
-
-
   
   // Set the kd-tree input
   kdtree.setInputCloud(input_cloud);
@@ -1124,18 +1010,567 @@ std::vector< std::vector<cluster_point> > dbtrack::improve_cluster(std::vector<c
   }
     
   std::vector< std::vector<cluster_point> > cluster_result;
-  // split_past(process_data, final_cluster_order);
   split_past_new(process_data, final_cluster_order);
-  // for(int i=0;i<final_cluster_order.size();i++){
-  //   std::vector<cluster_point> temp_cluster_unit;
-  //   for(int j=0;j<final_cluster_order.at(i).size();j++){
-  //     temp_cluster_unit.push_back(process_data.at(final_cluster_order.at(i).at(j)));
-  //   }
-  //   cluster_result.push_back(temp_cluster_unit);
-  // }
-  // cluster center is calculated from the merge_cluster() function
-  // cluster_center(cluster_result);
   cluster_result = current_final_cluster_vec;
 
   return cluster_result;
+}
+
+void dbtrack::training_dbtrack_para(bool training_, std::string filepath){
+  parameter_training = training_;
+  parameter_path = filepath;
+  check_path(parameter_path);
+  dbscan_para_path = boost::filesystem::path(parameter_path.c_str())/boost::filesystem::path(para_dataload);
+  
+  if(parameter_training){
+    // traing the parameters
+    use_dbscan_training_para = false;
+    std::cout << "Use default parameter setting for Cluster Algo\n";
+    std::cout << "Start to training the PARAMETERS\n";
+    trainingInit();
+    // test save matrix function
+    // Eigen::Matrix4d testMat;
+    // testMat = testMat.Random();
+    // boost::filesystem::path test_path = boost::filesystem::path(parameter_path.c_str())/boost::filesystem::path("test_mat.csv");
+    // save_parameter(testMat,test_path.c_str(),false);
+    // std::cout << "Test mat output:\n"<<testMat<<std::endl;
+
+  }
+  else if(!boost::filesystem::exists(dbscan_para_path)){
+    // wanna use training parameters but no pre-train parameters file
+    use_dbscan_training_para = false;
+    std::cout << "Use default parameter setting for Cluster Algo\n";
+  }
+  else{
+    // use the training parameters
+    use_dbscan_training_para = true;
+    std::cout << "Use learning parameter setting for Cluster Algo\n";
+    dbscan_parameter_matrix = load_parameter(dbscan_para_path.c_str());
+    std::cout << "Loading Matrix\n"<<dbscan_parameter_matrix<<std::endl;
+  }
+}
+
+void dbtrack::get_training_name(std::string scene_name){
+  training_scene_name = scene_name;
+}
+
+void dbtrack::save_parameter(Eigen::MatrixXd parameter_matrix, std::string filepath, bool appendFlag){
+  const static Eigen::IOFormat CSVFormat(Eigen::FullPrecision, Eigen::DontAlignCols, ", ", "\n");
+  ofstream file;
+  if(appendFlag){
+    file.open(filepath.c_str(), ios::out|ios::app);
+    file << "\n";
+  }
+  else
+    file.open(filepath.c_str(), ios::out);
+  
+  file << parameter_matrix.format(CSVFormat);
+  file.close();
+}
+
+Eigen::MatrixXd dbtrack::load_parameter(std::string filepath){
+  vector<double> matrixEntries;
+  ifstream matrixDataFile(filepath.c_str());
+  // this variable is used to store the row of the matrix that contains commas 
+  string matrixRowString;
+  // this variable is used to store the matrix entry;
+  string matrixEntry;
+  // this variable is used to track the number of rows
+  int matrixRowNumber = 0;
+
+  while (getline(matrixDataFile, matrixRowString))
+  {
+    stringstream matrixRowStringStream(matrixRowString);
+    while (getline(matrixRowStringStream, matrixEntry, ','))
+    {
+      matrixEntries.push_back(std::stod(matrixEntry));
+    }
+    matrixRowNumber++; //update the column numbers
+  }
+  return Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>(matrixEntries.data(), matrixRowNumber, matrixEntries.size() / matrixRowNumber);
+}
+
+void dbtrack::check_path(std::string path){
+  if(boost::filesystem::create_directories(path.c_str())){
+    std::cout << "Create directories\nPath: " << path.c_str() << std::endl;
+  }
+}
+
+void dbtrack::get_gt_cluster(std::vector< std::vector<cluster_point> > gt_cluster){
+  int gt_scan_num = gt_cluster.at(0).at(0).scan_time;
+  int delta_scan_num = scan_num - gt_scan_num;
+  while(delta_scan_num>=points_history.size()){
+    gt_cluster.erase(gt_cluster.begin());
+    gt_scan_num = gt_cluster.at(0).at(0).scan_time;
+    delta_scan_num = scan_num - gt_scan_num;
+  }
+  std::cout << "DBSCAN scan num: " << scan_num << std::endl;
+  std::cout << "gt_cluster scan num: " << gt_scan_num << std::endl;
+  std::cout << "gt_cluster delta scan num: " << delta_scan_num << std::endl;
+  for(auto &cluster_obj:gt_cluster){
+    for(auto &pt:cluster_obj){
+      Eigen::Vector3d clusterPoint(pt.x,pt.y,pt.vel);
+      for(auto &history_pt:points_history.at(points_history.size()-delta_scan_num-1)){
+        Eigen::Vector3d historyPoint(history_pt.x,history_pt.y,history_pt.vel);
+        historyPoint -= clusterPoint;
+        if(historyPoint.norm()==0){
+          history_pt.tracking_id = pt.tracking_id;
+          break;
+        }
+      }
+    }
+  }
+  boost::filesystem::path radarInputPath = boost::filesystem::path(parameter_path.c_str())/boost::filesystem::path(training_scene_name);
+  check_path(radarInputPath.c_str());
+  // std::cout << "Radar input path: " << radarInputPath.c_str() << std::endl;
+  for(auto history_vec:points_history){
+    // the data has been recorded
+    if(history_vec.at(0).scan_time<=radarInput_scanTime){
+      continue;
+    }
+    radarInput_scanTime = history_vec.at(0).scan_time;
+    bool firstWrite = true;
+    radarInputPath = boost::filesystem::path(parameter_path.c_str())/boost::filesystem::path(training_scene_name)/boost::filesystem::path(std::to_string(radarInput_scanTime)+".csv");
+    for(auto history_pt:history_vec){
+      Eigen::VectorXd radarInputVec(9);
+      radarInputVec << history_pt.x, history_pt.y, history_pt.scan_time,
+                       history_pt.r, history_pt.vel, history_pt.vel_ang,
+                       history_pt.x_v, history_pt.y_v, history_pt.tracking_id;
+      save_parameter(radarInputVec.transpose().matrix(),radarInputPath.c_str(),!firstWrite);
+      if(firstWrite)
+        firstWrite = false;
+      // std::cout << radarInputVec.transpose().matrix() << std::endl;
+    }
+  }
+}
+
+void dbtrack::trainingInit(){
+  boost::filesystem::path(parameter_path.c_str());
+  std::vector< std::pair<std::string, int> > trainingPathVec;
+  for(auto filename:boost::filesystem::directory_iterator(parameter_path)){
+    if(boost::filesystem::is_directory(filename)){
+      // std::cout << filename.path() << std::endl;
+      int scene_frames = std::count_if(boost::filesystem::directory_iterator(filename.path()),
+                                       boost::filesystem::directory_iterator(),
+                                       static_cast<bool(*)(const boost::filesystem::path&)>(boost::filesystem::is_regular_file) );
+      trainingPathVec.push_back(std::pair<std::string,int>(filename.path().c_str(),scene_frames));
+      std::cout << "file numbers: " << scene_frames << std::endl;
+    }
+  }
+  std::vector<std::string> skipList;
+  std::string skip_train_path = std::string(parameter_path.c_str()) + "/train_list.txt";
+  if(!boost::filesystem::exists(skip_train_path)){
+    ofstream skipTrainTxtfile;
+    skipTrainTxtfile.open(skip_train_path,ios::out);
+    skipTrainTxtfile.close();
+  }
+  else{
+    std::ifstream skipTrainTxt(skip_train_path, std::ios::in);
+    std::string s;
+    while (std::getline(skipTrainTxt, s)) {
+      std::cout << s << "\n";
+      skipList.push_back(s);
+    }
+    skipTrainTxt.close();
+  }
+
+  for(auto train_pair:trainingPathVec){
+    auto compare_index = std::find(skipList.begin(),skipList.end(),train_pair.first);
+    if(compare_index!=skipList.end()){
+      continue;
+    }
+    // read training data
+    std::vector<int> files_vec;
+    for(auto scene_file:boost::filesystem::directory_iterator(train_pair.first)){
+      files_vec.push_back(std::stoi(scene_file.path().stem().c_str()));
+    }
+    std::sort(files_vec.begin(),files_vec.end());
+    int count = 0;
+    for(auto scene_index:files_vec){
+      /* InputDataMat
+       * Row: points, Col: 9 elements
+       */
+      Eigen::MatrixXd InputDataMat = load_parameter(train_pair.first+"/"+std::to_string(scene_index)+".csv");
+      // std::cout << "Get file: " << train_pair.first+"/"+std::to_string(scene_index)+".csv\n"
+      //           << "Input Matrix\n\tRow: " << InputDataMat.rows()
+      //           << "\n\tCol:" << InputDataMat.cols() << std::endl;
+      std::vector<cluster_point> scene_data;
+      for(int r=0;r<InputDataMat.rows();r++){
+        cluster_point pt;
+        pt.x = InputDataMat(r,0);
+        pt.y = InputDataMat(r,1);
+        pt.scan_time = InputDataMat(r,2);
+        pt.r = InputDataMat(r,3);
+        pt.vel = InputDataMat(r,4);
+        pt.vel_ang = InputDataMat(r,5);
+        pt.x_v = InputDataMat(r,6);
+        pt.y_v = InputDataMat(r,7);
+        pt.tracking_id = InputDataMat(r,8);
+        pt.z = pt.z_v = 0;
+        pt.cluster_id = -1;
+        pt.visited = false;
+        pt.id = r;
+        scene_data.push_back(pt);
+      }
+      scan_num = scene_index;
+      count++;
+      // std::cout << "trainingCluster Function at " << count << std::endl;
+      if(count%10==0)
+        trainingCluster(scene_data, true);
+      else
+        trainingCluster(scene_data, false);
+    }
+
+    // write out the training scene name
+    ofstream skipTrainTxtfile;
+    skipTrainTxtfile.open(skip_train_path,ios::out|ios::app);
+    skipTrainTxtfile << train_pair.first;
+    skipTrainTxtfile << "\n";
+    skipTrainTxtfile.close();
+
+  }
+
+}
+
+void dbtrack::trainingCluster(std::vector<cluster_point> data, bool skip){
+  cluster_queue.clear();
+  cluster_queue.shrink_to_fit();
+  // ready to process the cluster points
+  pcl::PointCloud<pcl::PointXYZ>::Ptr current_pc = pcl::PointCloud<pcl::PointXYZ>().makeShared();
+  for(auto pt:data){
+    pcl::PointXYZ temp_pt;
+    temp_pt.x = pt.x;
+    temp_pt.y = pt.y;
+    temp_pt.z = vel_function(pt.vel,scan_num-pt.scan_time);
+    current_pc->points.push_back(temp_pt);
+  }
+  input_cloud_vec.push_back(current_pc);
+  points_history.push_back(data);
+  if(points_history.size()>history_frame_num){
+    points_history.erase(points_history.begin());
+    input_cloud_vec.erase(input_cloud_vec.begin());
+  }
+  std::vector< cluster_point > process_data;
+  std::vector<int> PointsHistoryNumVec; // record numbers per element in vec->points_history 
+  input_cloud->clear();
+  for(int i=0;i<points_history.size();i++){
+    process_data.insert(process_data.end(),points_history.at(i).begin(),points_history.at(i).end());
+    *input_cloud += *input_cloud_vec.at(i);
+    PointsHistoryNumVec.push_back(points_history.at(i).size());
+  }
+  // Skip the DBSCAN cluster part and just store the input data
+  if(skip)
+    return;
+
+  dbtrack_info cluster_pt;
+  cluster_pt.reachable_dist = -1; // undefined distance
+  cluster_queue.assign(process_data.size(),cluster_pt);
+
+  // Set the kd-tree input
+  kdtree.setInputCloud(input_cloud);
+
+  std::cout << "DBTRACK Cluster points size : " << data.size() << "/" << process_data.size() << "(" << points_history.size() << " frames)" << std::endl;
+  std::vector< std::vector<int> > final_cluster_order;
+    
+  // DBSCAN cluster
+  for(int i=0;i<process_data.size();i++){
+    // check if the pt has been visited
+    if(process_data.at(i).visited)
+      continue;
+    else if(process_data.at(i).noise_detect.size()>=noise_point_frame){
+      process_data.at(i).visited = true;
+      continue;
+    }
+    else
+      process_data.at(i).visited = true;
+    std::vector<int> temp_cluster;
+    
+    // find neighbor and get the core distance
+    cluster_queue.at(i).neighbor_info = find_neighbors(process_data.at(i));
+    temp_cluster.push_back(i);
+    // satisfy the Nmin neighbors (!= 0: find all cluster even the single point;>=Nmin : remove the noise)
+    if(cluster_queue.at(i).neighbor_info.pointIdxNKNSearch.size() != 0){
+      cluster_queue.at(i).core_dist = std::sqrt(*std::max_element(cluster_queue.at(i).neighbor_info.pointNKNSquaredDistance.begin(),
+                                                cluster_queue.at(i).neighbor_info.pointNKNSquaredDistance.end()));
+      if(process_data.at(i).noise_detect.size()==0)
+        expand_neighbor(process_data, temp_cluster, i);
+      // final_cluster_order.push_back(temp_cluster); // filter out the outlier that only contains one point in one cluster
+    }
+    else{
+      cluster_queue.at(i).core_dist = -1;      // undefined distance (not a core point)
+    }
+    final_cluster_order.push_back(temp_cluster);    // push the cluster that contains only one point to the final cluster result
+  }
+
+  std::vector<dbtrack_para> trainParameterVec(process_data.size(),dbtrack_param);
+  std::vector< std::vector<cluster_point*> > clusterVec;
+  std::map< int,std::vector<cluster_point*> > trackMap;
+  std::vector<std::vector<cluster_point>> dbscan_cluster;
+  for(auto cluster_vec:final_cluster_order){
+    std::vector<cluster_point*> tempVec;
+    std::vector<cluster_point> tempCluster;
+    for(auto cluster_pt:cluster_vec){
+      tempVec.push_back(&process_data.at(cluster_pt));
+      tempCluster.push_back(process_data.at(cluster_pt));
+      trackMap[process_data.at(cluster_pt).tracking_id].push_back(&process_data.at(cluster_pt));
+    }
+    clusterVec.push_back(tempVec);
+    dbscan_cluster.push_back(tempCluster);
+
+  }
+  if(trackMap.size()<2){
+    return;
+  }
+
+  /* Optimize the training parameters
+   * 
+   */
+  std::vector<std::vector<cluster_point>> gt_cluster;
+  for(auto clusterList:trackMap){
+    if(clusterList.first!=-1){
+      std::vector<cluster_point> temp_cluster;
+      for(auto pt:clusterList.second){
+        temp_cluster.push_back(*pt);
+      }
+      gt_cluster.push_back(temp_cluster);
+    }
+  }
+
+  double VMeasureScore = cluster_score(gt_cluster,dbscan_cluster);
+  int epoch = 0;
+  std::cout << setprecision(3);
+  std::cout << "\nStart to training Optimize\n";
+  std::cout << "Before Optimize -> V Measure Score: " << "\033[1;46m" << VMeasureScore << "\033[0m"  << std::endl;
+  while(VMeasureScore<0.95&&epoch<20){
+    VMeasureScore = trainingOptimize(process_data,trainParameterVec,clusterVec,trackMap);
+    epoch++;
+    // std::cout << "Epoch " << epoch << std::endl;
+  }
+  std::cout << setprecision(3);
+  std::cout << "After Optimize! Epoch: " << epoch << ", V Measure Score: " << "\033[1;46m" << VMeasureScore << "\033[0m"  << std::endl << std::endl;
+}
+
+double dbtrack::trainingOptimize(std::vector< cluster_point > &process_data,
+                               std::vector<dbtrack_para> &trainParameterVec,
+                               std::vector< std::vector<cluster_point*> > &clusterVec,
+                               std::map< int,std::vector<cluster_point*> > &trackMap){
+  // Decide the parameters
+  std::cout << setprecision(3);
+  for(auto clusterGroup:clusterVec){
+    std::map<int,std::vector<cluster_point*>> checkMap;
+    for(auto clusterPt:clusterGroup){
+      if(clusterPt->tracking_id==-1)
+        continue;
+      checkMap[clusterPt->tracking_id].push_back(clusterPt);
+    }
+    if(checkMap.size()<1){
+      // no gt
+      continue;
+    }
+    else if(checkMap.size()==1){
+      if(checkMap.begin()->second.size()==trackMap[checkMap.begin()->first].size()){
+        // perfect match
+        // for(auto pt:checkMap.at(0)){
+        //   int index = std::distance(process_data.begin(),std::find(process_data.begin(),process_data.end(),pt));
+        //   trainParameterVec.at(index) = dbtrack_param;
+        // }
+      }
+      else{
+        // over seg(one gt obj is splited to more than one cluster)
+        for(auto pt:checkMap.begin()->second){
+          int index = std::distance(process_data.begin(),std::find(process_data.begin(),process_data.end(),*pt));
+          trainParameterVec.at(index).eps += 0.2;
+          // std::cout << "OverSeg at point "<<index<<", eps: "<<trainParameterVec.at(index).eps<<"\n";
+        }
+      }
+    }
+    else{
+      // under seg(more than one gt obj in this cluster)
+      for(auto pt:checkMap.begin()->second){
+          int index = std::distance(process_data.begin(),std::find(process_data.begin(),process_data.end(),*pt));
+          trainParameterVec.at(index).eps -= 0.2;
+          // std::cout << "UnderSeg at point "<<index<<", eps: "<<trainParameterVec.at(index).eps<<"\n";
+        }
+    }
+  }
+  // reset the visited flag
+  for(auto &pt:process_data){
+    pt.visited = false;
+  }
+  std::vector<std::vector<cluster_point>> gt_cluster, dbscan_cluster;
+  for(auto clusterList:trackMap){
+    if(clusterList.first!=-1){
+      std::vector<cluster_point> temp_cluster;
+      for(auto pt:clusterList.second){
+        temp_cluster.push_back(*pt);
+      }
+      gt_cluster.push_back(temp_cluster);
+    }
+  }
+  // get the training result
+  std::vector< std::vector<int> > final_cluster_order = trainingDBSCAN(process_data, trainParameterVec);
+  
+
+  // reset the vector
+  clusterVec.clear();
+  clusterVec.shrink_to_fit();
+  trackMap.clear();
+  for(auto cluster_vec:final_cluster_order){
+    std::vector<cluster_point*> tempVec;
+    std::vector<cluster_point> tempCluster;
+    for(auto cluster_pt:cluster_vec){
+      tempVec.push_back(&process_data.at(cluster_pt));
+      tempCluster.push_back(process_data.at(cluster_pt));
+      trackMap[process_data.at(cluster_pt).tracking_id].push_back(&process_data.at(cluster_pt));
+    }
+    clusterVec.push_back(tempVec);
+    dbscan_cluster.push_back(tempCluster);
+  }
+  return cluster_score(gt_cluster,dbscan_cluster);
+  
+}
+
+std::vector< std::vector<int> > dbtrack::trainingDBSCAN(std::vector< cluster_point > &process_data,
+                             std::vector<dbtrack_para> &trainParameterVec){
+  dbtrack_info cluster_pt;
+  cluster_pt.reachable_dist = -1; // undefined distance
+  cluster_queue.clear();
+  cluster_queue.shrink_to_fit();
+  cluster_queue.assign(process_data.size(),cluster_pt);
+  std::vector< std::vector<int> > final_cluster_order;
+  // DBSCAN cluster
+  for(int i=0;i<process_data.size();i++){
+    // check if the pt has been visited
+    if(process_data.at(i).visited)
+      continue;
+    else if(process_data.at(i).noise_detect.size()>=noise_point_frame){
+      process_data.at(i).visited = true;
+      continue;
+    }
+    else
+      process_data.at(i).visited = true;
+    std::vector<int> temp_cluster;
+    
+    // find neighbor and get the core distance
+    cluster_queue.at(i).neighbor_info = find_neighbors(process_data.at(i),&trainParameterVec.at(i));
+    temp_cluster.push_back(i);
+    // satisfy the Nmin neighbors (!= 0: find all cluster even the single point;>=Nmin : remove the noise)
+    if(cluster_queue.at(i).neighbor_info.pointIdxNKNSearch.size() != 0){
+      cluster_queue.at(i).core_dist = std::sqrt(*std::max_element(cluster_queue.at(i).neighbor_info.pointNKNSquaredDistance.begin(),
+                                                cluster_queue.at(i).neighbor_info.pointNKNSquaredDistance.end()));
+      if(process_data.at(i).noise_detect.size()==0)
+        expand_neighbor(process_data, temp_cluster, i);
+      // final_cluster_order.push_back(temp_cluster); // filter out the outlier that only contains one point in one cluster
+    }
+    else{
+      cluster_queue.at(i).core_dist = -1;      // undefined distance (not a core point)
+    }
+    final_cluster_order.push_back(temp_cluster);    // push the cluster that contains only one point to the final cluster result
+  }
+  return final_cluster_order;
+}
+
+double dbtrack::cluster_score(std::vector<std::vector<cluster_point>>GroundTruthCluster, std::vector<std::vector<cluster_point>>ResultCluster, double beta){
+  Eigen::MatrixXd v_measure_mat(GroundTruthCluster.size(),ResultCluster.size()+1); // +1 for the noise cluster from dbscan
+  Eigen::MatrixXd cluster_list_mat(1,ResultCluster.size()+1); // check the cluster performance
+  v_measure_mat.setZero();
+  cluster_list_mat.setZero();
+  // std::cout << "Ground truth cluster:\n";
+  for(int idx=0;idx<GroundTruthCluster.size();idx++){
+    std::vector<kf_tracker_point> temp_gt = GroundTruthCluster.at(idx);
+    for(int i=0;i<temp_gt.size();i++){
+      bool find_cluster =false;
+
+      for(int cluster_idx=0;cluster_idx<ResultCluster.size()+1;cluster_idx++){
+        cluster_list_mat(0,cluster_idx) = cluster_idx;
+        if(cluster_idx == ResultCluster.size()){
+          if(!find_cluster){
+            v_measure_mat(idx,cluster_idx) += 1;
+          }
+          continue;
+        }
+        std::vector<kf_tracker_point> temp_dbcluster = ResultCluster.at(cluster_idx);
+        for(int j=0;j<temp_dbcluster.size();j++){
+          Eigen::Vector3d distance = Eigen::Vector3d(temp_gt.at(i).x,temp_gt.at(i).y,0) - Eigen::Vector3d(temp_dbcluster.at(j).x,temp_dbcluster.at(j).y,0);
+          if(distance.norm() <= 0.001){
+            v_measure_mat(idx,cluster_idx) += 1;
+            find_cluster = true;
+          }
+        }
+      }
+    }
+  }
+  int n = v_measure_mat.sum();
+  
+  // v-measure score calculation
+  Eigen::RowVectorXd row_sum = v_measure_mat.rowwise().sum();
+  Eigen::RowVectorXd col_sum = v_measure_mat.colwise().sum();
+
+  // std::cout << "Ground true (row): " << GroundTruthCluster.size() << " ,DBSCAN cluster (col):" << ResultCluster.size() << endl;
+  // std::cout << "v_measure_mat sum = " << n;
+  // std::cout << endl;
+
+  clusterScore result;
+  result.object_num = GroundTruthCluster.size();
+  std::cout << setprecision(0);
+  for(int i=0;i<v_measure_mat.rows();i++){
+    bool check_cluster_state = false;
+    for(int j=0;j<v_measure_mat.cols();j++){
+      if(v_measure_mat(i,j) == 0 || col_sum(j) == 0)
+        continue;
+      else
+        result.h_ck -= (v_measure_mat(i,j) / n) * log(v_measure_mat(i,j)/col_sum(j));
+      if(!check_cluster_state){
+        check_cluster_state = true;
+        if(v_measure_mat(i,j) < row_sum(i))
+          result.multi_cluster ++;
+        else if(j == v_measure_mat.cols()-1)
+          result.no_cluster ++;
+        else if(v_measure_mat(i,j) < col_sum(j))
+          result.under_cluster ++;
+        else
+          result.good_cluster ++;
+      }
+    }
+    if(row_sum(i) == 0)
+      continue;
+    else
+      result.h_c -= (row_sum(i)/n) * log(row_sum(i)/n);
+  }
+  if(result.h_ck == 0)
+    result.homo = 1;
+  else
+    result.homo = 1 - (result.h_ck / result.h_c);
+  for(int j=0;j<v_measure_mat.cols();j++){
+    for(int i=0;i<v_measure_mat.rows();i++){
+      if(v_measure_mat(i,j) == 0 || row_sum(i) == 0)
+        continue;
+      else
+        result.h_kc -= (v_measure_mat(i,j) / n) * log(v_measure_mat(i,j)/row_sum(i));
+    }
+    if(col_sum(j) == 0)
+      continue;
+    else
+      result.h_k -= (col_sum(j)/n) * log(col_sum(j)/n);
+
+  }
+  if(result.h_kc == 0)
+    result.comp = 1;
+  else
+    result.comp = 1 - (result.h_kc / result.h_k);
+  result.v_measure_score = (1+beta)*result.homo*result.comp / (beta*result.homo + result.comp);
+
+  // std::cout << setprecision(3);
+  // std::cout << "Homogeneity:\t" << result.homo << "\t-> ";
+  // std::cout << "H(C|k) = " << result.h_ck << ", H(C) = " << result.h_c << endl;
+  // std::cout << "Completeness:\t" << result.comp << "\t-> ";
+  // std::cout << "H(K|C) = " << result.h_kc << ", H(K) = " << result.h_k << endl;
+  // std::cout << "\033[1;46mV-measure score: " << result.v_measure_score << "\033[0m" << endl;
+  // std::cout << "Total object:" << result.object_num << endl;
+  // std::cout << "Correct object: " << result.good_cluster << endl;
+  // std::cout << "Over Seg in one object: " << result.multi_cluster << endl;
+  // std::cout << "Under Seg objects: " << result.under_cluster << endl;
+  // std::cout << "Bad object: " << result.no_cluster << endl << endl;
+
+  return result.v_measure_score;
 }
