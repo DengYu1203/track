@@ -7,3 +7,4 @@ cluster_score/Average/*.csv
 rviz_config/*
 src/dbscan_parameter/log*
 src/dbscan_parameter/train_list.txt
+cluster_score/radar_scenes/*
