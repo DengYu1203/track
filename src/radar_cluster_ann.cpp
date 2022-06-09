@@ -2744,14 +2744,15 @@ void score_cluster(std::vector<kf_tracker_point> score_cens, std::vector< std::v
       }
     }
   }
+  double ioupt3_f1 = dbtrack_seg.f1_score(gt_cluster,dbscan_cluster);
   pcl::toROSMsg(*gt_pointcloud,*gt_cloud);
   gt_cloud->header.frame_id = MAP_FRAME;
   gt_cloud->header.stamp = label_vec.at(0).marker.header.stamp;
   pub_anno_cluster.publish(gt_cloud);
   // pass the ground truth cluster to DBSCAN training
-  if(dbtrack_para_train){
+  // if(dbtrack_para_train){
     dbtrack_seg.get_gt_cluster(current_gt_cluster);
-  }
+  // }
 }
 
 void transform_radar_msg_to_cluster_data( const conti_radar::MeasurementConstPtr& msg, int &radar_point_size, int &radar_id_count,
@@ -2863,7 +2864,7 @@ void cluster_state(){
   if(firstFrame){
     dbtrack_seg.set_parameter(cluster_eps, cluster_Nmin, cluster_history_frames, cluster_dt_weight);
     dbtrack_seg.set_output_info(cluster_track_msg,motion_eq_optimizer_msg,rls_msg);
-    // dbtrack_seg.training_dbtrack_para(dbtrack_para_train);
+    dbtrack_seg.training_dbtrack_para(false);
   }
   double CLUSTER_START, CLUSTER_END;
   CLUSTER_START = clock();
