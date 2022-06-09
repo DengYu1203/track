@@ -11,6 +11,7 @@ roscpp
 cv_bridge
 conti_radar
 itri_msgs
+radar_scenes
 )
 find_package( OpenCV REQUIRED )
 
@@ -77,6 +78,27 @@ target_link_libraries(radar_track_itri
   ${catkin_LIBRARIES}
   ${PCL_LIBRARIES}
   ${OpenCV_LIBRARIES}
+)
+
+add_executable(radar_cluster_radarscenes
+   src/radar_cluster_radarscenes.cpp
+   src/Hungarian.cpp
+   src/dbtrack.cpp 
+   src/cluster_visual.cpp
+)
+
+target_link_libraries(radar_cluster_radarscenes
+  ${catkin_LIBRARIES}
+  ${PCL_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+)
+
+add_executable(radarScenes_odom_sub
+  src/radarScenes_odom_sub.cpp
+)
+
+target_link_libraries(radarScenes_odom_sub
+  ${catkin_LIBRARIES}
 )
 
 # add_dependencies (combineSensor conti_radare_gencpp)
