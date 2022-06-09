@@ -20,6 +20,9 @@
 
 #include <map>
 
+// DA for IOU score
+#include "Hungarian/Hungarian.h"
+
 // save/load file
 #include <fstream>
 #include <boost/filesystem.hpp>
@@ -82,7 +85,6 @@ class dbtrack
 {
   private:
     std::vector< std::vector<cluster_point> > points_history;         // raw points (t, t-1, t-2), past points(including current scan)
-    std::vector< std::vector<cluster_point> > cluster_with_history;   // cluster result with past points(including current scan) and the cluster composed of PAST data only
     std::vector< std::vector<cluster_point> > cluster_based_on_now;   // cluster result with past points(including current scan), but filter out the clsuter that only contains past
     std::vector< dbtrack_info > cluster_queue;                    // the neighbor info queue of the process data
     std::vector<cluster_point> final_center;                    // get the cluster center
@@ -97,7 +99,6 @@ class dbtrack
     void expand_neighbor(std::vector< cluster_point > &process_data, std::vector<int> &temp_cluster, int core_index, std::vector<dbtrack_para> *Optional_para=NULL);
     double distance(cluster_point p1, cluster_point p2);
     void split_past(std::vector< cluster_point > process_data, std::vector< std::vector<int> > &final_cluster_order);
-    void split_past_new(std::vector< cluster_point > process_data, std::vector< std::vector<int> > &final_cluster_order);
     void cluster_center(std::vector< std::vector<cluster_point> > cluster_list);
     double vel_function(double vel, int frame_diff);
     /*
@@ -180,15 +181,22 @@ class dbtrack
       double h_kc = 0;
       double h_k = 0;
     }clusterScore;
-    double cluster_score(std::vector<std::vector<cluster_point>>GroundTruthCluster, std::vector<std::vector<cluster_point>>ResultCluster, double beta=1.0);
+    typedef struct F1Score{
+      double f1_score;
+      double precision;
+      double recall;
+      int TP;
+      int FP;
+      int FN;
+    }F1Score;
+    void outputScore(clusterScore result, double beta=1.0);
+    void outputScore(F1Score f1_1, F1Score f1_2);
   public:
     dbtrack(double eps=1.5, int Nmin=2);
     ~dbtrack();
-    // Modify the DBSCAN Algo
-    std::vector< std::vector<cluster_point> > improve_cluster(std::vector<cluster_point> data);
-    // Original DBSCAN + Merge/Split
+    // DBSCAN + Merge/Split
     std::vector< std::vector<cluster_point> > cluster(std::vector<cluster_point> data);
-    std::vector< std::vector<cluster_point> > cluster_with_past();
+    // std::vector< std::vector<cluster_point> > cluster_with_past();
     std::vector< std::vector<cluster_point> > cluster_with_past_now();
     std::vector<cluster_point> get_center(void);
     std::vector< std::vector< std::vector<cluster_point> > > get_history_points_with_cluster_order(void);
@@ -198,6 +206,8 @@ class dbtrack
     void training_dbtrack_para(bool training_, std::string filepath="/home/user/deng/catkin_deng/src/track/src/dbscan_parameter"); // decide to train the parameter or not and give the filepath
     void get_training_name(std::string scene_name); // get bag name
     void get_gt_cluster(std::vector< std::vector<cluster_point> > gt_cluster);
+    double cluster_score(std::vector<std::vector<cluster_point>>GroundTruthCluster, std::vector<std::vector<cluster_point>>ResultCluster, double beta=1.0);
+    double f1_score(std::vector<std::vector<cluster_point>>GroundTruthCluster, std::vector<std::vector<cluster_point>>ResultCluster);
     int scan_num;
     double data_period;
     double dt_threshold_vel;  // use for the vel_function to decide the vel weight with scan difference
