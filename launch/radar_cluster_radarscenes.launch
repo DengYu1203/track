@@ -1,0 +1,53 @@
+<launch>
+    <node pkg="tf" type="static_transform_publisher" name="tf_static_radar1" args="3.663 -0.873 0 -1.48418552 0 0 /car /radar_1 100"/>
+    <node pkg="tf" type="static_transform_publisher" name="tf_static_radar2" args="3.86 -0.7 0 -0.436185662 0 0 /car /radar_2 100"/>
+    <node pkg="tf" type="static_transform_publisher" name="tf_static_radar3" args="3.86 0.7 0 0.436 0 0 /car /radar_3 100"/>
+    <node pkg="tf" type="static_transform_publisher" name="tf_static_radar4" args="3.663 0.873 0 1.484 0 0 /car /radar_4 100"/>
+    <node pkg="track"       type="radarScenes_odom_sub"             name="radarScenes_odom_sub" />
+    <node pkg="track"       type="radar_cluster_radarscenes"        name="radar_cluster_radarscenes"      output="screen"/>
+        <param name="output_KFT_result"     value="false"/>
+        <param name="output_obj_id_result"  value="false"/>
+        <param name="output_radar_info"     value="false"/>
+        <param name="output_cluster_info"   value="false"/>
+        <param name="output_dbscan_info"    value="false"/>
+        <param name="output_DA_pair"        value="false"/>
+        <param name="output_exe_time"       value="true"/>
+        <param name="output_gt_pt_info"     value="false"/>
+        <param name="DA_method"             value="false"/>
+        <param name="use_KFT_module"        value="false"/>
+        <!-- KFT_detection_choose // true: use the cluster_KFT(), false: use KFT() -->
+        <param name="KFT_detection_choose"  value="true"/>
+        <param name="show_stopObj_id"       value="false"/>
+        <param name="kft_id_num"            value="2"/>
+        <param name="show_vel_marker"       value="true"/>
+        
+        <!-- Set Cluster Algo and parameters -->
+        <!-- <param name="eps"                       value="1.5"/> -->
+        <param name="use_dynamic_eps"           value="true"/>
+        <param name="use_dynamic_Nmin"          value="false"/>
+        <param name="use_dynamic_vel"           value="false"/>
+        <param name="output_score_dir_name"     value="v81_ablation_eps_d_Nmin_4_v_p2"/>
+        <param name="eps"                       value="1.6"/>
+        <param name="eps_min"                   value="1.2"/>
+        <param name="eps_max"                   value="2.0"/>
+        <!-- <param name="eps"                       value="2.0"/> -->
+
+        <param name="Nmin"                      value="4"/>
+        <param name="v_thresh"                  value="0.2"/>
+        <param name="history_frames"            value="3"/>
+        <param name="cluster_dt_weight"         value="1.0"/>
+        <param name="viz_cluster_with_past"     value="true"/>
+        <param name="cluster_track_msg"         value="false"/>
+        <param name="motion_eq_optimizer_msg"   value="false"/>
+        <param name="rls_msg"                   value="false"/>
+        <!-- DBSCAN Training Parameter Flag -->
+        <param name="dbtrack_para_train"        value="false"/>
+        
+        <!-- Cluster Score -->
+        <param name="write_out_score_file"  value="false"/>
+        <param name="use_score_cluster"     value="true"/>
+        <param name="output_score_info"     value="false"/>
+        <param name="output_score_mat_info" value="false"/>
+
+    <param name="use_sim_time" value="true"/>
+</launch>
