@@ -73,6 +73,7 @@
 #include "cluster_visual/cluster_visual.h"
 #include <geometry_msgs/PolygonStamped.h>
 #include <jsk_recognition_msgs/BoundingBoxArray.h>
+#include <jsk_rviz_plugins/OverlayText.h>
 
 #include <json/json.h>
 #include <json/value.h>
@@ -99,6 +100,9 @@ typedef message_filters::sync_policies::ApproximateTime<conti_radar::Measurement
 
 ros::Publisher pub_cluster_marker;  // pub cluster index
 ros::Publisher pub_marker;          // pub tracking id
+ros::Publisher pub_eps_cloud;       // pub the dynamic DBSCAN cloud
+ros::Publisher pub_overlay_text;    // pub the text for overlayText
+std::vector<ros::Publisher> pub_color_bar(10);  //pub color bar
 ros::Publisher pub_anno_marker;     // pub annotation tracking id
 ros::Publisher pub_filter;          // pub filter points
 ros::Publisher pub_in_filter;       // pub the inlier points
@@ -203,6 +207,9 @@ typedef struct label_point
 
   visualization_msgs::Marker marker;  // record the label's marker
   vector<cluster_point> cluster_list; // record the radar points inside the box
+
+  double tracking_vel = 0;
+  int tracking_id = -1;
 }label_point;
 
 #define box_bias_w 1.5
@@ -382,7 +389,8 @@ typedef struct cluster_visual_unit{
 
 // cluster type
 string cluster_type = "dbscan";
-double cluster_eps;
+double cluster_eps, eps_min, eps_max;
+double v_thresh;
 int cluster_Nmin;
 int cluster_history_frames;
 double cluster_dt_weight; // use for the vel_function in cluster lib
@@ -394,7 +402,6 @@ bool rls_msg = false;
 // DBTRACK init
 dbtrack dbtrack_seg;
 bool dbtrack_para_train = false;
-bool dbtrack_para_train_direct = false;
 
 // past radars
 bool show_past_points = true;
@@ -418,7 +425,7 @@ typedef struct cluster_score{
   double h_k = 0;
   // scene info
   int scene_num = 0;
-  double ave_doppler_vel;
+  double ave_doppler_vel = 0;
 
 }v_measure_score;
 bool filename_change = false;  // to know if get the bag name yet
@@ -475,6 +482,151 @@ ros::Time fileStamp(string stamp_str){
     timestamp.nsec=stamp_temp;
     timestamp.sec=stamp/1000000;
     return timestamp;
+}
+
+uint32_t color_gradient(double ratio){
+  int color_range = 10;
+  int region = (ratio*color_range);
+  // ROS_INFO("eps ratio: %f, region: %d",ratio,region);
+  uint32_t colorBar[color_range] = {
+    0x46264A,
+    0x6A315A,
+    0x8C3B55,
+    0xB14A42,
+    0xD78A47,
+    0xFFE64A,
+    0x9AF460,
+    0x75EB9F,
+    0x89DBE4,
+    0x9BA5DE
+  };
+  if(region>color_range-1){
+    return colorBar[color_range-1];
+  }
+  else{
+    return colorBar[region];
+  }
+
+}
+
+void dynamic_viz_(dynamic_param result, std::vector<cluster_point> points){
+  int Nmin = result.Nmin;
+  double Vthresh = result.Vthresh;
+  jsk_rviz_plugins::OverlayText overlayMsg;
+  overlayMsg.width = 240;
+  overlayMsg.height = 75;
+  overlayMsg.left = 1400;
+  overlayMsg.top = 900;
+  overlayMsg.text_size = 20;
+  overlayMsg.line_width = 2;
+  overlayMsg.font = "DejaVu Sans Mono";
+  overlayMsg.text = "\tNmin: "+std::to_string(Nmin)+"\n\tVth: "+std::to_string(Vthresh);
+  overlayMsg.fg_color.r = 25 / 255.0;
+  overlayMsg.fg_color.g = 1.0;
+  overlayMsg.fg_color.b = 240.0 / 255.0;
+  overlayMsg.fg_color.a = 1.0;
+
+  overlayMsg.bg_color.r = 0.0;
+  overlayMsg.bg_color.g = 0.0;
+  overlayMsg.bg_color.b = 0.0;
+  overlayMsg.bg_color.a = 0.7;
+  pub_overlay_text.publish(overlayMsg);
+  // color bar
+  int color_range = 10;
+  uint32_t colorBar[color_range] = {
+    0x46264A,
+    0x6A315A,
+    0x8C3B55,
+    0xB14A42,
+    0xD78A47,
+    0xFFE64A,
+    0x9AF460,
+    0x75EB9F,
+    0x89DBE4,
+    0x9BA5DE
+    // 0x46264A,
+    // 0x5A2C55,
+    // 0x6A315A,
+    // 0x7B365A,
+    // 0x8C3B55,
+    // 0x9E3E4A,
+    // 0xB14A42,
+    // 0xC36745,
+    // 0xD78A47,
+    // 0xEBB449,
+    // 0xFFE64A,
+    // 0xDAFA54,
+    // 0xA6F65E,
+    // 0x7BF168,
+    // 0x71ED88,
+    // 0x7AEAB4,
+    // 0x82E6D7,
+    // 0x8BD3E3,
+    // 0x93B8E0,
+    // 0x9BA5DE
+  };
+  jsk_rviz_plugins::OverlayText colorbarMsg;
+  colorbarMsg.width = 40;
+  colorbarMsg.height = 50;
+  colorbarMsg.left = 1600;
+  colorbarMsg.top = 320;
+  colorbarMsg.text_size = 8;
+  colorbarMsg.line_width = 3;
+  colorbarMsg.font = "DejaVu Sans Mono";
+  std::stringstream bar_max, bar_min;
+  bar_max << std::fixed << std::setprecision(2) << eps_max;
+  bar_min << std::fixed << std::setprecision(2) << eps_min;
+  colorbarMsg.text = "Max  "+bar_max.str();
+  colorbarMsg.fg_color.r = 1.0;
+  colorbarMsg.fg_color.g = 1.0;
+  colorbarMsg.fg_color.b = 1.0;
+  colorbarMsg.fg_color.a = 0.9;
+  for(int i=(color_range-1);i>=0;i--){
+    colorbarMsg.bg_color.r = ((colorBar[i]>>16) & 0xff)/255.0;
+    colorbarMsg.bg_color.g = ((colorBar[i]>>8) & 0xff)/255.0;
+    colorbarMsg.bg_color.b = ((colorBar[i]) & 0xff)/255.0;
+    colorbarMsg.bg_color.a = 1.0;
+    if(i<(color_range-1)&&i>0){
+      colorbarMsg.text = "";
+      colorbarMsg.fg_color.r = 0.0;
+      colorbarMsg.fg_color.g = 0.0;
+      colorbarMsg.fg_color.b = 0.0;
+      colorbarMsg.fg_color.a = 0.0;
+    }
+    else if(i==0){
+      colorbarMsg.text = "Min\n"+bar_min.str();
+      colorbarMsg.fg_color.r = 1.0;
+      colorbarMsg.fg_color.g = 1.0;
+      colorbarMsg.fg_color.b = 1.0;
+      colorbarMsg.fg_color.a = 0.9;
+    }
+    colorbarMsg.top += colorbarMsg.height;
+    pub_color_bar[i].publish(colorbarMsg);
+  }
+  
+
+  pcl::PointCloud<pcl::PointXYZRGB>::Ptr eps_points_rgb(new pcl::PointCloud<pcl::PointXYZRGB>);
+  sensor_msgs::PointCloud2::Ptr eps_cloud(new sensor_msgs::PointCloud2);
+  if(points.size()!=result.eps.size()){
+    ROS_WARN("Dynamic eps numbers are incompatible!");
+  }
+  for(int i=0;i<points.size();i++){
+    pcl::PointXYZRGB pt;
+    pt.x = points[i].x;
+    pt.y = points[i].y;
+    pt.z = points[i].z;
+    double ratio = (result.eps[i]-eps_min)/(eps_max-eps_min);
+    // ROS_INFO("Eps: %f, ratio: %f",result.eps[i], ratio );
+    pt.rgba = color_gradient(ratio);
+    eps_points_rgb->points.push_back(pt);
+
+  }
+  
+  pcl::toROSMsg(*eps_points_rgb,*eps_cloud);
+  eps_cloud->header.frame_id = MAP_FRAME;
+  eps_cloud->header.stamp = radar_stamp;
+  pub_eps_cloud.publish(eps_cloud);
+
 }
 
 // publish the tracking id
@@ -670,16 +822,22 @@ void color_cluster(std::vector< std::vector<kf_tracker_point> > cluster_list, bo
 }
 
 // publish the cluster points with polygon
-void polygon_cluster_visual(std::vector< std::vector<kf_tracker_point> > cluster_list){
+void polygon_cluster_visual(std::vector< std::vector<kf_tracker_point> > cluster_list, std::vector<int> ambiguous_idx={}, std::vector<int> cluster_tracking_result={}){
   std_msgs::Header header;
   header.frame_id = MAP_FRAME;
   header.stamp = radar_stamp;
   std::vector<geometry_msgs::PolygonStamped> polygon_vec;
   std::vector<cluster_visual_unit> single_point_cluster;
-  std::vector<bool> record_moving_cluster_poly, record_moving_cluster_single;
+  std::vector<bool> record_moving_cluster_poly, record_moving_cluster_single, record_ambiguous_cluster, record_ambiguous_cluster_single;
   jsk_recognition_msgs::BoundingBoxArray bbox_array;
   bbox_array.header = header;
+  double viz_hight = 2.5, viz_height_bias = 2.5;
   for(int i=0;i<cluster_list.size();i++){
+    bool ambiguous = false;
+    if(ambiguous_idx.size()>0){
+      if(std::find(ambiguous_idx.begin(),ambiguous_idx.end(),cluster_tracking_result[i])!=ambiguous_idx.end())
+        ambiguous = true;
+    }
     pcl::PointCloud <pcl::PointXYZ>::Ptr pointsCluster(new pcl::PointCloud<pcl::PointXYZ>);
     pcl::PointXYZ pt;
     cluster_visual_unit cluster_unit;
@@ -707,6 +865,7 @@ void polygon_cluster_visual(std::vector< std::vector<kf_tracker_point> > cluster
         cluster_unit.y_radius = 1.0f;
         single_point_cluster.push_back(cluster_unit);
         record_moving_cluster_single.push_back(high_vel);
+        record_ambiguous_cluster_single.push_back(ambiguous);
         break;
       case 2:
         ab_vec = Eigen::Vector3d( cluster_list.at(i).at(0).x-cluster_list.at(i).at(1).x,
@@ -845,6 +1004,7 @@ void polygon_cluster_visual(std::vector< std::vector<kf_tracker_point> > cluster
       polygon_vec.push_back(clusterObject.GetPolygon());
       bbox_array.boxes.push_back(clusterObject.GetBoundingBox());
       record_moving_cluster_poly.push_back(high_vel);
+      record_ambiguous_cluster.push_back(ambiguous);
     }
   }
   // visualization_msgs::MarkerArray ClusterHulls;
@@ -870,7 +1030,16 @@ void polygon_cluster_visual(std::vector< std::vector<kf_tracker_point> > cluster
       // ObjHull.color.r = 250.0f/255.0f;
       // ObjHull.color.g = 112.0f/255.0f;
       // ObjHull.color.b = 188.0f/255.0f;
-      ObjHull.scale.x = ObjHull.scale.y = ObjHull.scale.z = 0.2;
+      ObjHull.scale.x = ObjHull.scale.y = ObjHull.scale.z = 0.4;
+    }
+    if(record_ambiguous_cluster.at(cluster_idx)){
+      ObjHull.color.r = 0.0f/255.0f;
+      ObjHull.color.g = 255.0f/255.0f;
+      ObjHull.color.b = 0.0f/255.0f;
+      ObjHull.color.r = 250.0f/255.0f;
+      ObjHull.color.g = 112.0f/255.0f;
+      ObjHull.color.b = 188.0f/255.0f;
+      ObjHull.scale.x = ObjHull.scale.y = ObjHull.scale.z = 0.4;
     }
     ObjHull.lifetime = ros::Duration(dt-0.01);
 
@@ -878,7 +1047,7 @@ void polygon_cluster_visual(std::vector< std::vector<kf_tracker_point> > cluster
     for(int j=0;j<polygon_vec.at(cluster_idx).polygon.points.size();j++){
       markerPt.x = polygon_vec.at(cluster_idx).polygon.points[j].x;
       markerPt.y = polygon_vec.at(cluster_idx).polygon.points[j].y;
-      markerPt.z = polygon_vec.at(cluster_idx).polygon.points[j].z*1.5;
+      markerPt.z = polygon_vec.at(cluster_idx).polygon.points[j].z*viz_hight+viz_height_bias;
       ObjHull.points.push_back(markerPt);
     }
     ClusterHulls.markers.push_back(ObjHull);
@@ -887,7 +1056,7 @@ void polygon_cluster_visual(std::vector< std::vector<kf_tracker_point> > cluster
     visualization_msgs::Marker ObjHull;
     ObjHull.header = header;
     ObjHull.header.frame_id = MAP_FRAME;
-    ObjHull.ns = "cluster_polygon";
+    ObjHull.ns = "cluster_polygon_single";
     ObjHull.action = visualization_msgs::Marker::ADD;
     ObjHull.pose.orientation.w = 1.0;
     ObjHull.id = polygon_vec.size() + cluster_idx;
@@ -904,7 +1073,16 @@ void polygon_cluster_visual(std::vector< std::vector<kf_tracker_point> > cluster
       // ObjHull.color.r = 250.0f/255.0f;
       // ObjHull.color.g = 112.0f/255.0f;
       // ObjHull.color.b = 188.0f/255.0f;
-      ObjHull.scale.x = 0.2;
+      ObjHull.scale.x = 0.4;
+    }
+    if(record_ambiguous_cluster_single.at(cluster_idx)){
+      ObjHull.color.r = 0.0f/255.0f;
+      ObjHull.color.g = 255.0f/255.0f;
+      ObjHull.color.b = 0.0f/255.0f;
+      ObjHull.color.r = 250.0f/255.0f;
+      ObjHull.color.g = 112.0f/255.0f;
+      ObjHull.color.b = 188.0f/255.0f;
+      ObjHull.scale.x = 0.4;
     }
     ObjHull.lifetime = ros::Duration(dt-0.01);
 
@@ -912,11 +1090,11 @@ void polygon_cluster_visual(std::vector< std::vector<kf_tracker_point> > cluster
       geometry_msgs::Point markerPt;
       markerPt.x = single_point_cluster.at(cluster_idx).x_radius * sin(i*2*M_PI/360) + single_point_cluster.at(cluster_idx).center.x;
       markerPt.y = single_point_cluster.at(cluster_idx).y_radius * cos(i*2*M_PI/360) + single_point_cluster.at(cluster_idx).center.y;
-      markerPt.z = single_point_cluster.at(cluster_idx).center.z*1.5;
+      markerPt.z = single_point_cluster.at(cluster_idx).center.z*viz_hight+viz_height_bias;
       ObjHull.points.push_back(markerPt);
     }
     // Set the cluster polygon color invisable if the cluster containts only one point
-    ObjHull.color.a = 0;
+    ObjHull.color.a = 1;
     ClusterHulls.markers.push_back(ObjHull);
   }
   if(ClusterHulls.markers.size() > cluster_polygon_max_size)
@@ -1279,6 +1457,7 @@ void show_trajectory(){
   int count_cov_num = 0;
 
   for(k=0; k<filters.size(); k++){
+    // std::cout<<"tracker "<<k<<": ("<<filters[k].pred_pose.x<<", "<<filters[k].pred_pose.y<<") ID:"<<filters[k].uuid<<"\n";
     geometry_msgs::Point pred_vel;
     pred_vel.x = filters.at(k).pred_v.x;
     pred_vel.y = filters.at(k).pred_v.y;
@@ -1421,7 +1600,7 @@ void show_trajectory(){
 
   if(count_vel_num > tracking_vel_marker_max_size)
     tracking_vel_marker_max_size = count_vel_num;
-  for(int a=count_vel_num;a<vel_marker_max_size;a++){
+  for(int a=count_vel_num;a<tracking_vel_marker_max_size;a++){
     visualization_msgs::Marker marker;
 		marker.header.frame_id = MAP_FRAME;
 		marker.header.stamp = radar_stamp;
@@ -1494,7 +1673,7 @@ void show_past_radar_points_with_color(){
         pt.r = color1.r-(color1.r-color2.r)/cluster_history_frames*(cluster_history_frames-1-j);
         pt.g = color1.g-(color1.g-color2.g)/cluster_history_frames*(cluster_history_frames-1-j);
         pt.b = color1.b-(color1.b-color2.b)/cluster_history_frames*(cluster_history_frames-1-j);
-        
+        pt.a = 1;
         history_filter_points_rgb->points.push_back(pt);
       }
     }
@@ -1686,7 +1865,11 @@ void cluster_KFT(std::vector<int> cluster_tracking_result){
     filters.at(i).pred_pose = pt;
     filters.at(i).pred_v = pt_v;
   }
-
+  // std::cout<<"cluster tracking result size: "<<cluster_tracking_result.size()<<", cens size: "<<cens.size()<<std::endl;
+  // std::cout<<"cluster tracking result:\n";
+  // for(auto idx:cluster_tracking_result){
+  //   std::cout<<idx<<std::endl;
+  // }
   // Get measurements
   // Extract the position of the clusters forom the multiArray. To check if the data
   // coming in, check the .z (every third) coordinate and that will be 0.0
@@ -1726,6 +1909,7 @@ void cluster_KFT(std::vector<int> cluster_tracking_result){
   
   // record the cluster tracking result
   std::vector<bool> cluster_tracking_bool_vec(past_radars_with_cluster.size(),false);
+  std::vector<int> unmatch_filters;
 
   for(int k=0; k<filters.size(); k++){
     geometry_msgs::Point pred_v = filters.at(k).pred_v;
@@ -1793,6 +1977,8 @@ void cluster_KFT(std::vector<int> cluster_tracking_result){
     else
     {
       filters.at(k).tracking_state = TRACK_STATE::missing;
+      unmatch_filters.push_back(k);
+
     }
     
 
@@ -1819,12 +2005,68 @@ void cluster_KFT(std::vector<int> cluster_tracking_result){
   }
   vector<int> marker_obj_id = obj_id;
   //initiate new tracks for not-matched(obj_id = -1) cluster
+  std::vector<std::pair<int,int>> update_pair;
   for (i=0; i<cens.size(); i++){
     if(obj_id.at(i) == -1){
-      int track_uuid = new_track(cens.at(i),i,cluster_tracking_result.at(i));
-      obj_id.at(i) = track_uuid;
+      bool check_unmatched = false;
+      for(auto it=unmatch_filters.begin();it!=unmatch_filters.end();){
+        geometry_msgs::Point pred_pos = filters.at(*it).pred_pose;
+        Eigen::Vector3d dist_diff(cens.at(i).x-pred_pos.x,cens.at(i).y-pred_pos.y,0);
+        if(dist_diff.norm()<2){
+          // std::cout<<"cluster idx: "<< cluster_tracking_result[i]<<", tracking uuid: "<< filters.at(*it).uuid<< std::endl;
+          obj_id[i] = filters.at(*it).uuid;
+          marker_obj_id[i] = filters.at(*it).uuid;
+          if(filters.at(*it).track_frame > tracking_stable_frames)
+            tracking_frame_obj_id[i] = filters.at(*it).uuid;
+          filters.at(*it).cluster_idx = i;
+          filters.at(*it).tracking_state = TRACK_STATE::tracking;
+          // check the traker's motion state
+          if(cens.at(i).vel < motion_vel_threshold && filters.at(*it).motion != MOTION_STATE::stop){
+            filters.at(*it).motion = MOTION_STATE::slow_down;
+            cens.at(i).motion = MOTION_STATE::slow_down;
+          }
+          else if(cens.at(i).vel < motion_vel_threshold){
+            filters.at(*it).motion = MOTION_STATE::stop;
+            cens.at(i).motion = MOTION_STATE::stop;
+          }
+          else
+          {
+            filters.at(*it).motion = MOTION_STATE::move;
+            cens.at(i).motion = MOTION_STATE::move;
+          }
+          geometry_msgs::Point tracking_pt_history;
+          tracking_pt_history.x = cens.at(i).x;
+          tracking_pt_history.y = cens.at(i).y;
+          tracking_pt_history.z = cens.at(i).z;
+          filters.at(*it).history.push_back(tracking_pt_history);
+
+          geometry_msgs::Point tracking_pt_history_smooth;
+          tracking_pt_history_smooth.x = filters.at(*it).kf.statePre.at<float>(0);
+          tracking_pt_history_smooth.y = filters.at(*it).kf.statePre.at<float>(1);
+          tracking_pt_history_smooth.z = filters.at(*it).kf.statePre.at<float>(2);
+          filters.at(*it).history_smooth.push_back(tracking_pt_history_smooth);
+          
+          if(filters.at(*it).track_frame>10)
+            cluster_tracking_bool_vec.at(i) = true;
+          check_unmatched = true;
+        }
+        if(check_unmatched){
+          update_pair.push_back(std::pair<int,int>(i,filters.at(*it).uuid));
+          unmatch_filters.erase(it);
+          break;
+        }
+        else{
+          it++;
+        }
+        
+      }
+      if(!check_unmatched){
+        int track_uuid = new_track(cens.at(i),i,cluster_tracking_result.at(i));
+        obj_id.at(i) = track_uuid;
+      }
     }
   }
+  dbtrack_seg.update_tracker_association(update_pair);
 
   if(output_obj_id_result){
     std::cout<<"\033[1;33mThe obj_id after new track:\033[0m\n";
@@ -1843,7 +2085,7 @@ void cluster_KFT(std::vector<int> cluster_tracking_result){
           (*pit).lose_frame = 0;
       }
       
-      if ( (*pit).lose_frame == frame_lost )
+      if ( (*pit).lose_frame == 2 )
           //remove track from filters
           pit = filters.erase(pit);
       else
@@ -2423,7 +2665,8 @@ void first_frame_KFT(std::vector<int> cluster_tracking_result={}){
 }
 
 void output_score(double beta, v_measure_score result){
-  string dir_path = ros::package::getPath("track") + "/cluster_score/" + to_string(ros::WallTime::now().toBoost().date()) + "/";
+  // string dir_path = ros::package::getPath("track") + "/cluster_score/" + to_string(ros::WallTime::now().toBoost().date()) + "/";
+  string dir_path = ros::package::getPath("track") + "/cluster_score/nuscenes/v8_dynamic_eps_parameter_with_feedback_nuscenes/";
   string csv_name_with_para;
   stringstream eps_s,Nmin_s;
   eps_s << cluster_eps;
@@ -2481,9 +2724,10 @@ void output_score(double beta, v_measure_score result){
   return;
 }
 
-void score_cluster(std::vector<kf_tracker_point> score_cens, std::vector< std::vector<kf_tracker_point> > dbscan_cluster, double beta=1.0){
+void score_cluster(std::vector<kf_tracker_point> score_cens, std::vector< std::vector<kf_tracker_point> > dbscan_cluster, std::vector<int> skip_ambiguous_vec={}, std::vector<int> cluster_tracking_result={}){
   get_label = false;
-  std::vector< std::vector<kf_tracker_point> > gt_cluster;
+  double beta=1.0;
+  std::vector< std::vector<kf_tracker_point> > gt_cluster, moving_gt_cluster;
   std::cout << "\033[1;33mScore cluster performance\033[0m" << endl;
   std::cout << "Timestamp: " << label_vec.at(0).marker.header.stamp.toSec() << endl;
   std::cout << "Reading bag: " << score_file_name << endl;
@@ -2563,9 +2807,39 @@ void score_cluster(std::vector<kf_tracker_point> score_cens, std::vector< std::v
     }
     if(n != 0){
       gt_cluster.push_back(label_list);
-      label_idx_vec.push_back(label_idx);
+      if(label_vec.at(label_idx).tracking_vel>0.4){
+        moving_gt_cluster.push_back(label_list);
+        label_idx_vec.push_back(label_idx);
+      }
     }  
   }
+  // score the moving cluster only
+  if(use_score_cluster){
+    std::cout<<"Annotation Bbox for score id("<<label_idx_vec.size()<<"): ";
+    for(auto idx:label_idx_vec){
+      std::cout<<label_vec.at(idx).tracking_id<<" ";
+    }
+    std::cout<<std::endl;
+    if(skip_ambiguous_vec.size()!=0){
+      std::vector<std::vector<kf_tracker_point>> remove_ambiguous_cluster;
+      for(int i=0;i<dbscan_cluster.size();i++){
+        if(std::find(skip_ambiguous_vec.begin(),skip_ambiguous_vec.end(),cluster_tracking_result[i])!=skip_ambiguous_vec.end()){
+          continue;
+        }
+        else{
+          remove_ambiguous_cluster.push_back(dbscan_cluster[i]);
+        }
+      }
+      dbtrack_seg.cluster_score(moving_gt_cluster,remove_ambiguous_cluster);
+      dbtrack_seg.f1_score(moving_gt_cluster,remove_ambiguous_cluster);
+    }
+    else{
+      dbtrack_seg.cluster_score(moving_gt_cluster,dbscan_cluster);
+      dbtrack_seg.f1_score(moving_gt_cluster,dbscan_cluster);
+    }
+  }
+  // dbtrack_seg.f1_score(moving_gt_cluster,dbscan_cluster);
+  /*
   Eigen::MatrixXd v_measure_mat(gt_cluster.size(),dbscan_cluster.size()+1); // +1 for the noise cluster from dbscan
   Eigen::MatrixXd cluster_list_mat(1,dbscan_cluster.size()+1); // check the cluster performance
   v_measure_mat.setZero();
@@ -2711,7 +2985,10 @@ void score_cluster(std::vector<kf_tracker_point> score_cens, std::vector< std::v
   std::cout << "Average doppler velocity:" << result.ave_doppler_vel << endl;
   if(write_out_score_file && (result.object_num != 0))
     output_score(beta,result);
-  
+  double ioupt3_f1 = dbtrack_seg.f1_score(moving_gt_cluster,dbscan_cluster);
+  */
+
+  /*
   // republish radar points
   pcl::PointCloud<pcl::PointXYZI>::Ptr gt_pointcloud(new pcl::PointCloud<pcl::PointXYZI>);
   sensor_msgs::PointCloud2::Ptr gt_cloud(new sensor_msgs::PointCloud2);
@@ -2739,20 +3016,24 @@ void score_cluster(std::vector<kf_tracker_point> score_cens, std::vector< std::v
           pt.intensity = gt_tracking_id;
           gt_pointcloud->push_back(pt);
         }
-        current_gt_cluster.push_back(it.cluster_pc);
+
+        // if(Eigen::Vector2d(it.pred_v.x,it.pred_v.y).norm()>=0.2){
+          current_gt_cluster.push_back(it.cluster_pc);
+        // }
         break;
       }
     }
   }
-  double ioupt3_f1 = dbtrack_seg.f1_score(gt_cluster,dbscan_cluster);
+  // double ioupt3_f1 = dbtrack_seg.f1_score(moving_gt_cluster,dbscan_cluster);
   pcl::toROSMsg(*gt_pointcloud,*gt_cloud);
   gt_cloud->header.frame_id = MAP_FRAME;
   gt_cloud->header.stamp = label_vec.at(0).marker.header.stamp;
   pub_anno_cluster.publish(gt_cloud);
   // pass the ground truth cluster to DBSCAN training
   // if(dbtrack_para_train){
-    dbtrack_seg.get_gt_cluster(current_gt_cluster);
+    // dbtrack_seg.get_gt_cluster(current_gt_cluster);
   // }
+  */
 }
 
 void transform_radar_msg_to_cluster_data( const conti_radar::MeasurementConstPtr& msg, int &radar_point_size, int &radar_id_count,
@@ -2862,17 +3143,25 @@ void transform_radar_msg_to_cluster_data( const conti_radar::MeasurementConstPtr
 void cluster_state(){
   // cluster the points with DBSCAN-based method
   if(firstFrame){
-    dbtrack_seg.set_parameter(cluster_eps, cluster_Nmin, cluster_history_frames, cluster_dt_weight);
+    dbtrack_seg.reset();
+    dbtrack_seg.set_parameter(cluster_eps, eps_min, eps_max, cluster_Nmin, cluster_history_frames, cluster_dt_weight, v_thresh);
     dbtrack_seg.set_output_info(cluster_track_msg,motion_eq_optimizer_msg,rls_msg);
-    dbtrack_seg.training_dbtrack_para(false);
+    dbtrack_seg.set_dynamic(true, true, true);
   }
   double CLUSTER_START, CLUSTER_END;
   CLUSTER_START = clock();
   dbtrack_seg.scan_num = call_back_num;
+  dbtrack_seg.time_stamp = radar_stamp.toSec();
   dbtrack_seg.data_period = dt;
   std::vector< std::vector<kf_tracker_point> > dbtrack_cluster, dbtrack_cluster_current;
   dbtrack_cluster_current = dbtrack_seg.cluster(cens);    // the current scan cluster result
   std::vector<int> cluster_tracking_result = dbtrack_seg.cluster_tracking_result(); // record the cluster-tracking id
+  // std::vector<int> ambiguous_idx = dbtrack_seg.ambiguous_cluster();
+  std::vector<int> ambiguous_idx = {};
+  // Viz the Dynamic Parameters result form the MLP. Need cens to viz!!
+  dynamic_param dynamic_dbscan_result = dbtrack_seg.dynamic_viz();
+  dynamic_viz_(dynamic_dbscan_result, cens);
+
   dbtrack_cluster.clear();
   dbtrack_cluster = dbtrack_seg.cluster_with_past_now();  // the cluster result that consist the past data
   CLUSTER_END = clock();
@@ -2884,22 +3173,23 @@ void cluster_state(){
   // score the cluster performance
   if(use_score_cluster && get_label && (fabs(label_vec.at(0).marker.header.stamp.toSec()-radar_stamp.toSec()) <= 0.08))
     score_cluster(cens, dbtrack_cluster_current);
+    // score_cluster(cens, dbtrack_cluster_current, ambiguous_idx, cluster_tracking_result);
   
   cens.clear();
   cens = dbtrack_seg.get_center();        // the cluster center based on the current points
-  rls_vel_marker(cens);
+  // rls_vel_marker(cens);
   
   // cluster visualization
   if(!viz_cluster_with_past){
     // For current cluster only
     color_cluster(dbtrack_cluster_current,true,cluster_tracking_result);
-    polygon_cluster_visual(dbtrack_cluster_current);
+    polygon_cluster_visual(dbtrack_cluster_current, ambiguous_idx, cluster_tracking_result);
   }
   else{
     // Cluster contains past and current
     // ROS_WARN("Check size-> center:%d, polygon:%d, cluster_tracker:%d",(int)cens.size(),(int)dbtrack_cluster.size(),(int)cluster_tracking_result.size());
     color_cluster(dbtrack_cluster,true,cluster_tracking_result);
-    polygon_cluster_visual(dbtrack_cluster);
+    polygon_cluster_visual(dbtrack_cluster, ambiguous_idx, cluster_tracking_result);
   }
 
   // publish the history radar points
@@ -2948,14 +3238,34 @@ void viz_overlay_radar(){
 }
 
 void callback(const conti_radar::MeasurementConstPtr& in_msg){
+  if(filename_change){
+    std::cout<<"change bag!\n";
+    filename_change = false;
+    firstFrame = true;
+    firstGTFrame = true;
+    get_radar_transform_check = {0,0,0,0,0};
+    get_map_transform = false;
+    dbtrack_seg.reset();
+    call_back_num = 0;
+    // anno_id_count = 0;
+    // anno_filters.clear();anno_filters.shrink_to_fit();
+    // anno_token.clear();anno_token.shrink_to_fit();
+    filters.clear();filters.shrink_to_fit();
+    id_count = 0;
+  }
   int radar_point_size = in_msg->points.size();
   int radar_id_count = 0;
   std::cout<<"\n\n\033[1;4;100m"<<++call_back_num<<" Call Back radar points:"<<radar_point_size<<"\033[0m"<<endl;
   if(radar_point_size==0) //radar points cannot be zero, it would cause segement fault
     return;
+  if(!firstFrame){
+    dt = in_msg->header.stamp.toSec() - radar_stamp.toSec();
+    std::cout<<"dt: "<<dt<<std::endl;
+  }
   radar_stamp = in_msg->header.stamp;
   std::cout << std::fixed; std::cout.precision(3);
   std::cout<<"Radar time:"<<radar_stamp.toSec()<<endl;
+  std::cout << "Bag: "<<score_file_name<<std::endl;
   
   std::vector< conti_radar::MeasurementConstPtr > call_back_msg_list;
   call_back_msg_list.push_back(in_msg);
@@ -3136,6 +3446,7 @@ void radar_callback(const conti_radar::MeasurementConstPtr& f_msg,
 void annotation(const visualization_msgs::MarkerArrayConstPtr& label){
   if(!use_score_cluster || label->markers.size() == 0)
     return;
+  std:cout<<"In annotation, label size: "<<label->markers.size()<<std::endl;
   ros::Time label_stamp = label->markers.at(0).header.stamp;
   for(int i=anno_root_idx;i<anno_root[0]["sample_num"].asInt();i++){
     if(fileStamp(anno_root[i+1]["timestamp"].asString())==label_stamp){
@@ -3257,11 +3568,14 @@ void annotation(const visualization_msgs::MarkerArrayConstPtr& label){
 
 
     // check the tracking token
+    double anno_vel = 0;
+    int anno_tracking_id = -1;
     string instance_token_str = anno_root[anno_root_idx]["annotation"][i]["instance_token"].asString();
     auto instance_idx = std::find(anno_token.begin(),anno_token.end(),instance_token_str);
     if(instance_idx!=anno_token.end()){
       // find the tracker
       int anno_trakcer_idx = instance_idx-anno_token.begin();
+      anno_tracking_id = anno_filters.at(anno_trakcer_idx).uuid;
       geometry_msgs::Point label_center;
       label_center.x = label_pt.pose.getOrigin().x();
       label_center.y = label_pt.pose.getOrigin().y();
@@ -3269,6 +3583,15 @@ void annotation(const visualization_msgs::MarkerArrayConstPtr& label){
       anno_filters.at(anno_trakcer_idx).timestamp.push_back(label_pt.marker.header.stamp);
       anno_filters.at(anno_trakcer_idx).tracking_state = TRACK_STATE::tracking;
       anno_filters.at(anno_trakcer_idx).history.push_back(label_center);
+      Eigen::Vector2d pred_vel;
+      int history_num = anno_filters.at(anno_trakcer_idx).history.size();
+      if(history_num>1){
+        pred_vel << anno_filters.at(anno_trakcer_idx).history.back().x-anno_filters.at(anno_trakcer_idx).history.at(history_num-2).x,
+                    anno_filters.at(anno_trakcer_idx).history.back().y-anno_filters.at(anno_trakcer_idx).history.at(history_num-2).y;
+        double dt = anno_filters.at(anno_trakcer_idx).timestamp.back().toSec() - anno_filters.at(anno_trakcer_idx).timestamp.at(history_num-2).toSec();
+        pred_vel /= dt;
+      }
+      anno_vel = pred_vel.norm();
       
     }
     else{
@@ -3277,6 +3600,7 @@ void annotation(const visualization_msgs::MarkerArrayConstPtr& label){
       track track_pt;
       track_pt.uuid = anno_token.size();
       track_pt.track_frame++;
+      anno_tracking_id = track_pt.uuid;
       geometry_msgs::Point label_center;
       label_center.x = label_pt.pose.getOrigin().x();
       label_center.y = label_pt.pose.getOrigin().y();
@@ -3298,26 +3622,38 @@ void annotation(const visualization_msgs::MarkerArrayConstPtr& label){
     label_pt.marker.lifetime = ros::Duration(0.1);
     label_pt.marker.scale.x = label_pt.marker.scale.x;
     label_pt.marker.scale.y = label_pt.marker.scale.y;
+    label_pt.tracking_vel = anno_vel;
+    label_pt.tracking_id = anno_tracking_id;
     label_vec.push_back(label_pt);
     repub.markers.push_back(label_pt.marker);
     cube_box.header = label_pt.marker.header;
     repub.markers.push_back(cube_box);
+    // std::cout<<"In label marker "<<i<<"\n";
   }
   get_label = true;
 
   pub_annotation.publish(repub);
+  // if(output_label_info){
+  //   std::cout<<"End of annotation callback\n";
+  // }
   return;
 }
 
 void read_tracking_info(string scene_name){
   Json::Reader reader;
   ifstream log_json("/home/user/dataset/nuScenes/code/radar_tracking/v1.0-trainval/"+scene_name+".json",ios::binary);
+  anno_root.clear();
   reader.parse(log_json,anno_root);
+  anno_id_count = 0;
+  anno_obj_id.clear();anno_obj_id.shrink_to_fit();
+  anno_filters.clear();anno_filters.shrink_to_fit();
+  anno_token.clear();anno_token.shrink_to_fit();
+  anno_root_idx = 0;
 }
 
 void get_bag_info_callback(const rosgraph_msgs::LogConstPtr& log_msg){
-  if(!use_score_cluster)
-    return;
+  // if(!use_score_cluster)
+  //   return;
   if(log_msg->msg.find(".bag") != log_msg->msg.npos){
     filename_change = true;
     score_file_name = log_msg->msg;
@@ -3352,6 +3688,11 @@ int main(int argc, char** argv){
   pub_marker = nh.advertise<visualization_msgs::MarkerArray>("tracking_id", 1);
   pub_anno_marker = nh.advertise<visualization_msgs::MarkerArray>("annotation_id",1);
   pub_filter = nh.advertise<sensor_msgs::PointCloud2>("radar_history",500);
+  pub_eps_cloud = nh.advertise<sensor_msgs::PointCloud2>("eps_cloud",500);
+  pub_overlay_text = nh.advertise<jsk_rviz_plugins::OverlayText>("overlayText",10);
+  for(int i=0;i<pub_color_bar.size();i++){
+    pub_color_bar[i] = nh.advertise<jsk_rviz_plugins::OverlayText>("ColorBar/"+std::to_string(i),1);
+  }
   pub_in_filter = nh.advertise<sensor_msgs::PointCloud2>("inlier_radar",200);
   pub_out_filter = nh.advertise<sensor_msgs::PointCloud2>("outlier_radar",200);
   pub_cluster_center = nh.advertise<sensor_msgs::PointCloud2>("cluster_center",500);
@@ -3401,9 +3742,11 @@ int main(int argc, char** argv){
   // cluster state parameters
   nh.param<string>("cluster_type"       ,cluster_type         ,"dbscan");
   nh.param<bool>("dbtrack_para_train"   ,dbtrack_para_train   ,false);
-  nh.param<bool>("dbtrack_para_train_direct"   ,dbtrack_para_train_direct   ,false);
-  nh.param<double>("eps"                ,cluster_eps          ,2.5);
+  nh.param<double>("eps"                ,cluster_eps          ,1.5);
+  nh.param<double>("eps_min"            ,eps_min              ,1.2);
+  nh.param<double>("eps_max"            ,eps_max              ,2.5);
   nh.param<int>("Nmin"                  ,cluster_Nmin         ,2);
+  nh.param<double>("v_thresh"           ,v_thresh             ,0.2);
   nh.param<int>("history_frames"        ,cluster_history_frames  ,3);
   nh.param<double>("cluster_dt_weight"  ,cluster_dt_weight    ,0.0);
   nh.param<bool>("viz_cluster_with_past",viz_cluster_with_past,true);
@@ -3473,22 +3816,6 @@ int main(int argc, char** argv){
 
   while(ros::ok()){
     ros::spinOnce();
-    // train DBSCAN parameter directly
-    if(dbtrack_para_train_direct){
-      dbtrack_seg.data_period = dt;
-      dbtrack_seg.set_parameter(cluster_eps, cluster_Nmin, cluster_history_frames, cluster_dt_weight);
-      dbtrack_seg.set_output_info(cluster_track_msg,motion_eq_optimizer_msg,rls_msg);
-      dbtrack_seg.training_dbtrack_para(dbtrack_para_train_direct);
-      // visualize the training result
-      std::vector< std::vector<kf_tracker_point> > dbtrack_cluster = dbtrack_seg.cluster_with_past_now();
-      std::vector<int> cluster_tracking_result = dbtrack_seg.cluster_tracking_result();
-      past_radars_with_cluster.clear();
-      past_radars_with_cluster = dbtrack_seg.get_history_points_with_cluster_order();
-      color_cluster(dbtrack_cluster,true,cluster_tracking_result);
-      polygon_cluster_visual(dbtrack_cluster);
-      show_past_radar_points_with_color();
-      dbtrack_para_train_direct = false;
-    }
     pub_marker.publish(m_s);
   }
   return 0;

@@ -377,7 +377,7 @@ typedef struct cluster_visual_unit{
 
 // cluster type
 string cluster_type = "dbscan";
-double cluster_eps;
+double cluster_eps, eps_min, eps_max;
 int cluster_Nmin;
 int cluster_history_frames;
 double cluster_dt_weight; // use for the vel_function in cluster lib
@@ -3307,7 +3307,7 @@ void transform_radar_msg_to_cluster_data( const conti_radar::MeasurementConstPtr
 void cluster_state(){
   // cluster the points with DBSCAN-based method
   if(firstFrame){
-    dbtrack_seg.set_parameter(cluster_eps, cluster_Nmin, cluster_history_frames, cluster_dt_weight);
+    dbtrack_seg.set_parameter(cluster_eps, eps_min, eps_max, cluster_Nmin, cluster_history_frames, cluster_dt_weight, motion_vel_threshold);
     dbtrack_seg.set_output_info(cluster_track_msg,motion_eq_optimizer_msg,rls_msg);
   }
   double CLUSTER_START, CLUSTER_END;
@@ -3906,6 +3906,8 @@ int main(int argc, char** argv){
   // cluster state parameters
   nh.param<string>("cluster_type"       ,cluster_type         ,"dbscan");
   nh.param<double>("eps"                ,cluster_eps          ,2.5);
+  nh.param<double>("eps_min"            ,eps_min              ,1.2);
+  nh.param<double>("eps_max"            ,eps_max              ,2.5);
   nh.param<int>("Nmin"                  ,cluster_Nmin         ,2);
   nh.param<int>("history_frames"        ,cluster_history_frames  ,3);
   nh.param<double>("cluster_dt_weight"  ,cluster_dt_weight    ,0.0);
