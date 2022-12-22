@@ -72,6 +72,7 @@
 #include "cluster_visual/cluster_visual.h"
 #include <geometry_msgs/PolygonStamped.h>
 #include <jsk_recognition_msgs/BoundingBoxArray.h>
+#include <jsk_rviz_plugins/OverlayText.h>
 
 #include <json/json.h>
 #include <json/value.h>
@@ -90,6 +91,9 @@ typedef message_filters::sync_policies::ApproximateTime<radar_scenes::RadarScene
 
 ros::Publisher pub_cluster_marker;  // pub cluster index
 ros::Publisher pub_marker;          // pub tracking id
+ros::Publisher pub_eps_cloud;       // pub the dynamic DBSCAN cloud
+ros::Publisher pub_overlay_text;    // pub the text for overlayText
+std::vector<ros::Publisher> pub_color_bar(10);  //pub color bar
 ros::Publisher pub_filter;          // pub filter points
 ros::Publisher pub_in_filter;       // pub the inlier points
 ros::Publisher pub_cluster_center;  // pub cluster points
@@ -105,8 +109,11 @@ ros::Publisher pub_pt;              // pub the tracking history pts
 ros::Publisher pub_pred;            // pub the predicted pts
 ros::Publisher pub_anno_cluster;    // pub the cluster from the annotation
 ros::Publisher pub_cluster_hull;    // pub the cluster polygon result
+ros::Publisher pub_GT_cluster_hull;    // pub the cluster polygon result
 ros::Publisher pub_cluster_bbox;    // pub the cluster Bounding Box
 ros::Publisher pub_tracker_cov;      // pub the tracker covariance
+ros::Publisher pub_gt_label_id;
+ros::Publisher pub_gt_uuid;
 
 
 /*
@@ -131,6 +138,7 @@ bool show_stopObj_id = true;  // decide to show the tracker id at stop object or
 bool show_vel_marker = false;
 int kft_id_num = 1;           // 1: only show the id tracked over 5 frames, 2: show the id tracked over 1 frames, 3: show all id
 bool use_score_cluster = false; // true: score the cluster performance
+bool score_function = false;
 bool KFT_detection_choose = true; // true: use the cluster_KFT(), false: use KFT()
 
 #define KFT_INFO(msg)     if (output_KFT_result) {std::cout << msg;}
@@ -150,9 +158,6 @@ ros::Time radar_stamp,label_stamp;
 float vx = 0; // vehicle vel x
 float vy = 0; // vehicle vel y
 
-#define box_bias_w 1.5
-#define box_bias_l 2.0
-bool get_label = false;
 
 /*
  * cluster and tracking center
@@ -160,6 +165,7 @@ bool get_label = false;
 std::vector< radar_scenes::RadarScenesConstPtr > call_back_msg_list;
 vector<kf_tracker_point> cens;
 std::vector<int> cluster_tracking_result_dbpda;
+std::vector< std::vector<kf_tracker_point> > current_scan_cluster_result;
 
 /*
  * For visualization
@@ -167,6 +173,7 @@ std::vector<int> cluster_tracking_result_dbpda;
 visualization_msgs::MarkerArray m_s,l_s,cluster_s;
 visualization_msgs::MarkerArray ClusterHulls; // show the radar cluster polygon marker
 int max_size = 0, cluster_marker_max_size = 0, cluster_polygon_max_size = 0, trajcetory_max_size = 0, vel_marker_max_size = 0, tracking_vel_marker_max_size = 0, cov_marker_max_size = 0;
+int gt_cluster_polygon_max_size=0;
 int anno_vel_max = 0, anno_tra_max = 0, anno_id_max = 0;
 int debug_id_max_size = 0;
 typedef struct marker_color
@@ -294,7 +301,6 @@ float sigmaQ = 0.1;   //0.1
 #define bias 4.0      // used for data association bias 5 6
 #define mahalanobis_bias 5.5 // used for data association(mahalanobis dist)
 int id_count = 0; //the counter to calculate the current occupied track_id
-int anno_id_count = 0; //the counter to calculate the current occupied annotation track_id
 #define frame_lost 10   // 5 10
 
 std::vector <int> id;
@@ -308,7 +314,9 @@ int ctrlDim = 0;  // control input 0(acceleration=0,constant v model)
 bool firstFrame = true;
 tf::TransformListener *tf_listener;
 
-#define motion_vel_threshold  0.80  // 2.88km/h
+// #define motion_vel_threshold  0.80  // 2.88km/h
+#define motion_vel_threshold  0.20
+// #define motion_vel_threshold  0.50
 
 enum class TRACK_STATE{
   missing,    // once no matching
@@ -323,7 +331,8 @@ typedef struct cluster_visual_unit{
 }cluster_visual_unit;
 
 // cluster type
-double cluster_eps;
+double cluster_eps, eps_max, eps_min;
+double v_thresh;
 int cluster_Nmin;
 int cluster_history_frames;
 double cluster_dt_weight; // use for the vel_function in cluster lib
@@ -331,37 +340,22 @@ bool viz_cluster_with_past = true;  // True : visualize the cluster result with 
 bool cluster_track_msg = false;
 bool motion_eq_optimizer_msg = false;
 bool rls_msg = false;
+bool use_dynamic_eps = true;  // decide to use dynamic eps for clustering
+bool use_dynamic_Nmin = true; // decide to use dynamic Nmin for clustering
+bool use_dynamic_vel = true;  // decide to use dynamci Vthershod for clustering
+std::string output_score_dir_name; // record the cluster score dir name
+std::pair<double, double>  clusterIOU(-1,-1);
+double clusterMotionVth = -1;
 
 // DBTRACK init
 dbtrack dbtrack_seg;
 bool dbtrack_para_train = false;
-bool dbtrack_para_train_direct = false;
 
 // past radars
 bool show_past_points = true;
 std::vector< std::vector<cluster_point> > past_radars;
 std::vector< std::vector< std::vector<cluster_point> > > past_radars_with_cluster;
 
-// for score the cluster performance
-typedef struct cluster_score{
-  int frame;
-  int object_num = 0;
-  int good_cluster = 0;   // good cluster in gt
-  int multi_cluster = 0;  // multiple clusters in one gt
-  int under_cluster =0;    // cluster cover over than one gt
-  int no_cluster = 0; // no cluster in gt
-  double v_measure_score = 0;
-  double homo = 0;
-  double h_ck = 0;
-  double h_c = 0;
-  double comp = 0;
-  double h_kc = 0;
-  double h_k = 0;
-  // scene info
-  int scene_num = 0;
-  double ave_doppler_vel;
-
-}v_measure_score;
 bool filename_change = false;  // to know if get the bag name yet
 string score_file_name; // bag name
 int score_frame = 0;
@@ -398,12 +392,10 @@ typedef struct track{
 
 // tracking result vector
 std::vector<track> filters;
-std::vector<track> anno_filters;  // the annotation tracking filters
-std::vector<int> anno_obj_id;    // record the current scan points' cluster tracking id
-// std::vector< std::vector<cluster_point> > gt_cluster_vec;  // the vector contains the gt cluster result
-std::vector<string> anno_token;
-Json::Value anno_root;
-int anno_root_idx = 0;
+
+// init functions
+void score_cluster(std::vector< std::vector<kf_tracker_point> > ResultCluster);
+
 
 void transform_init(){
   tf::Transform trans2car;
@@ -435,16 +427,137 @@ void transform_init(){
   
 }
 
-ros::Time fileStamp(string stamp_str){
-    long int stamp=stod(stamp_str.c_str());
-    ros::Time timestamp;
-    long int stamp_temp = (stamp%1000000)*1000;
-    while(stamp_temp/100000000<0){
-        stamp_temp=stamp_temp*10;
+uint32_t color_gradient(double ratio){
+  int color_range = 10;
+  int region = (ratio*color_range);
+  // ROS_INFO("eps ratio: %f, region: %d",ratio,region);
+  uint32_t colorBar[color_range] = {
+    0x46264A,
+    0x6A315A,
+    0x8C3B55,
+    0xB14A42,
+    0xD78A47,
+    0xFFE64A,
+    0x9AF460,
+    0x75EB9F,
+    0x89DBE4,
+    0x9BA5DE
+  };
+  if(region>color_range-1){
+    return colorBar[color_range-1];
+  }
+  else{
+    return colorBar[region];
+  }
+
+}
+
+void dynamic_viz_(dynamic_param result, std::vector<cluster_point> points){
+  int Nmin = result.Nmin;
+  double Vthresh = result.Vthresh;
+  jsk_rviz_plugins::OverlayText overlayMsg;
+  overlayMsg.width = 450;
+  overlayMsg.height = 120;
+  overlayMsg.left = 100;
+  overlayMsg.top = 100;
+  overlayMsg.text_size = 40;
+  overlayMsg.line_width = 2;
+  overlayMsg.font = "DejaVu Sans Mono";
+  std::stringstream ss;
+  ss << std::fixed << std::setprecision(2) << Vthresh;
+  overlayMsg.text = "\tNmin: "+std::to_string(Nmin)+"\n\tVth: "+ss.str();
+  if(clusterIOU.first!=-1){
+    std::stringstream ss2;
+    double f1_out = clusterIOU.first*100;
+    ss2 << std::fixed << std::setprecision(2) << f1_out;
+    overlayMsg.text+="\n\tF1: "+ss2.str()+"%";
+  }
+  overlayMsg.fg_color.r = 25 / 255.0;
+  overlayMsg.fg_color.g = 1.0;
+  overlayMsg.fg_color.b = 240.0 / 255.0;
+  overlayMsg.fg_color.a = 1.0;
+
+  overlayMsg.bg_color.r = 0.0;
+  overlayMsg.bg_color.g = 0.0;
+  overlayMsg.bg_color.b = 0.0;
+  overlayMsg.bg_color.a = 0.7;
+  pub_overlay_text.publish(overlayMsg);
+  // color bar
+  int color_range = 10;
+  uint32_t colorBar[color_range] = {
+    0x46264A,
+    0x6A315A,
+    0x8C3B55,
+    0xB14A42,
+    0xD78A47,
+    0xFFE64A,
+    0x9AF460,
+    0x75EB9F,
+    0x89DBE4,
+    0x9BA5DE
+  };
+  jsk_rviz_plugins::OverlayText colorbarMsg;
+  colorbarMsg.width = 40;
+  colorbarMsg.height = 50;
+  colorbarMsg.left = 1600;
+  colorbarMsg.top = 320;
+  colorbarMsg.text_size = 8;
+  colorbarMsg.line_width = 3;
+  colorbarMsg.font = "DejaVu Sans Mono";
+  std::stringstream bar_max, bar_min;
+  bar_max << std::fixed << std::setprecision(2) << eps_max;
+  bar_min << std::fixed << std::setprecision(2) << eps_min;
+  colorbarMsg.text = "Max  "+bar_max.str();
+  colorbarMsg.fg_color.r = 1.0;
+  colorbarMsg.fg_color.g = 1.0;
+  colorbarMsg.fg_color.b = 1.0;
+  colorbarMsg.fg_color.a = 0.9;
+  for(int i=(color_range-1);i>=0;i--){
+    colorbarMsg.bg_color.r = ((colorBar[i]>>16) & 0xff)/255.0;
+    colorbarMsg.bg_color.g = ((colorBar[i]>>8) & 0xff)/255.0;
+    colorbarMsg.bg_color.b = ((colorBar[i]) & 0xff)/255.0;
+    colorbarMsg.bg_color.a = 1.0;
+    if(i<(color_range-1)&&i>0){
+      colorbarMsg.text = "";
+      colorbarMsg.fg_color.r = 0.0;
+      colorbarMsg.fg_color.g = 0.0;
+      colorbarMsg.fg_color.b = 0.0;
+      colorbarMsg.fg_color.a = 0.0;
     }
-    timestamp.nsec=stamp_temp;
-    timestamp.sec=stamp/1000000;
-    return timestamp;
+    else if(i==0){
+      colorbarMsg.text = "Min\n"+bar_min.str();
+      colorbarMsg.fg_color.r = 1.0;
+      colorbarMsg.fg_color.g = 1.0;
+      colorbarMsg.fg_color.b = 1.0;
+      colorbarMsg.fg_color.a = 0.9;
+    }
+    colorbarMsg.top += colorbarMsg.height;
+    pub_color_bar[i].publish(colorbarMsg);
+  }
+  
+
+  pcl::PointCloud<pcl::PointXYZRGB>::Ptr eps_points_rgb(new pcl::PointCloud<pcl::PointXYZRGB>);
+  sensor_msgs::PointCloud2::Ptr eps_cloud(new sensor_msgs::PointCloud2);
+  if(points.size()!=result.eps.size()){
+    ROS_WARN("Dynamic eps numbers are incompatible!");
+  }
+  for(int i=0;i<points.size();i++){
+    pcl::PointXYZRGB pt;
+    pt.x = points[i].x;
+    pt.y = points[i].y;
+    pt.z = points[i].z;
+    double ratio = (result.eps[i]-eps_min)/(eps_max-eps_min);
+    // ROS_INFO("Eps: %f, ratio: %f",result.eps[i], ratio );
+    pt.rgba = color_gradient(ratio);
+    eps_points_rgb->points.push_back(pt);
+
+  }
+  
+  pcl::toROSMsg(*eps_points_rgb,*eps_cloud);
+  eps_cloud->header.frame_id = MAP_FRAME;
+  eps_cloud->header.stamp = radar_stamp;
+  pub_eps_cloud.publish(eps_cloud);
+
 }
 
 // publish the tracking id
@@ -639,32 +752,101 @@ void color_cluster(std::vector< std::vector<kf_tracker_point> > cluster_list, bo
     pub_cluster_marker.publish(cluster_s);
 }
 
+void polygon_gt_visual(std::vector< std::vector<kf_tracker_point> > gt_cluster){
+  std_msgs::Header header;
+  header.frame_id = MAP_FRAME;
+  header.stamp = radar_stamp;
+  double viz_hight = 2.5, viz_height_bias = 2.5;
+  std::vector<geometry_msgs::PolygonStamped> polygon_vec;
+  for(int i=0;i<gt_cluster.size();i++){
+    pcl::PointCloud <pcl::PointXYZ>::Ptr pointsCluster(new pcl::PointCloud<pcl::PointXYZ>);
+    for(int j=0;j<gt_cluster.at(i).size();j++){
+      pcl::PointXYZ pt;
+      pt.x = gt_cluster.at(i).at(j).x;
+      pt.y = gt_cluster.at(i).at(j).y;
+      pt.z = 0;
+      pointsCluster->points.push_back(pt);
+    }
+    Cluster_visual clusterObject;
+    clusterObject.SetCloud(pointsCluster, header, true);
+    polygon_vec.push_back(clusterObject.GetPolygon());
+  }
+  visualization_msgs::MarkerArray GT_ClusterHulls;
+  GT_ClusterHulls.markers.clear();
+  for(int cluster_idx=0;cluster_idx<polygon_vec.size();cluster_idx++){
+    visualization_msgs::Marker ObjHull;
+    ObjHull.header = header;
+    ObjHull.header.frame_id = MAP_FRAME;
+    ObjHull.ns = "gt_polygon";
+    ObjHull.action = visualization_msgs::Marker::ADD;
+    ObjHull.pose.orientation.w = 1.0;
+    ObjHull.id = cluster_idx;
+    ObjHull.type = visualization_msgs::Marker::LINE_STRIP;
+    // ObjHull.scale = cluster_polygon_color.scale;
+    // ObjHull.color = cluster_polygon_color.color;
+    ObjHull.color.r = 250.0f/255.0f;
+    ObjHull.color.g = 112.0f/255.0f;
+    ObjHull.color.b = 188.0f/255.0f;
+    ObjHull.color.a = 1.0;
+    ObjHull.scale.x = ObjHull.scale.y = ObjHull.scale.z = 0.5;
+    ObjHull.lifetime = ros::Duration(dt-0.01);
+    geometry_msgs::Point markerPt;
+    for(int j=0;j<polygon_vec.at(cluster_idx).polygon.points.size();j++){
+      markerPt.x = polygon_vec.at(cluster_idx).polygon.points[j].x;
+      markerPt.y = polygon_vec.at(cluster_idx).polygon.points[j].y;
+      markerPt.z = polygon_vec.at(cluster_idx).polygon.points[j].z*viz_hight+viz_height_bias;
+      ObjHull.points.push_back(markerPt);
+    }
+    GT_ClusterHulls.markers.push_back(ObjHull);
+  }
+  if(GT_ClusterHulls.markers.size() > gt_cluster_polygon_max_size)
+    gt_cluster_polygon_max_size = GT_ClusterHulls.markers.size();
+  for (int a = polygon_vec.size(); a < gt_cluster_polygon_max_size; a++){
+    visualization_msgs::Marker marker;
+    marker.header = header;
+    marker.ns = "gt_polygon";
+    marker.id = a;
+    marker.color.a = 0;
+    marker.action = visualization_msgs::Marker::DELETE;
+    marker.type = visualization_msgs::Marker::LINE_STRIP;
+    marker.pose.position.x = 0;
+    marker.pose.position.y = 0;
+    marker.pose.position.z = 0;
+    marker.scale.x = 1;
+    marker.lifetime = ros::Duration(dt-0.01);
+    GT_ClusterHulls.markers.push_back(marker);
+  }
+  pub_GT_cluster_hull.publish(GT_ClusterHulls);
+}
+
+
 // publish the cluster points with polygon
-void polygon_cluster_visual(std::vector< std::vector<kf_tracker_point> > clusterResult){
+void polygon_cluster_visual(std::vector< std::vector<kf_tracker_point> > cluster_list, std::vector<int> cluster_tracking_result={}){
   std_msgs::Header header;
   header.frame_id = MAP_FRAME;
   header.stamp = radar_stamp;
   std::vector<geometry_msgs::PolygonStamped> polygon_vec;
   std::vector<cluster_visual_unit> single_point_cluster;
-  std::vector<bool> record_moving_cluster_poly, record_moving_cluster_single;
+  std::vector<bool> record_moving_cluster_poly, record_moving_cluster_single, record_ambiguous_cluster, record_ambiguous_cluster_single;
   jsk_recognition_msgs::BoundingBoxArray bbox_array;
   bbox_array.header = header;
   double viz_hight = 2.5, viz_height_bias = 2.5;
   // Do not viz stationary cluster
-  std::vector< std::vector<kf_tracker_point> > cluster_list = clusterResult;
-  for(auto cluster_it=cluster_list.begin();cluster_it!=cluster_list.end();){
-    Eigen::Vector2d vel(0,0);
-    for(auto pt:*cluster_it){
-      vel += Eigen::Vector2d(pt.x_v,pt.y_v);
-    }
-    if(vel.norm()<motion_vel_threshold){
-      cluster_list.erase(cluster_it);
-    }
-    else{
-      cluster_it++;
-    }
-  }
   for(int i=0;i<cluster_list.size();i++){
+    Eigen::Vector2d vel(0,0);
+    double vel_comp = 0;
+    for(auto pt:cluster_list[i]){
+      vel += Eigen::Vector2d(pt.x_v,pt.y_v);
+      vel_comp+=pt.vel;
+    }
+    vel /= (cluster_list[i]).size();
+    if(clusterMotionVth>0&&vel.norm()<clusterMotionVth){
+      continue;
+    }
+    else if(vel.norm()<motion_vel_threshold){
+      continue;
+    }
+    bool ambiguous = false;
     pcl::PointCloud <pcl::PointXYZ>::Ptr pointsCluster(new pcl::PointCloud<pcl::PointXYZ>);
     pcl::PointXYZ pt;
     cluster_visual_unit cluster_unit;
@@ -692,6 +874,7 @@ void polygon_cluster_visual(std::vector< std::vector<kf_tracker_point> > cluster
         cluster_unit.y_radius = 1.0f;
         single_point_cluster.push_back(cluster_unit);
         record_moving_cluster_single.push_back(high_vel);
+        record_ambiguous_cluster_single.push_back(ambiguous);
         break;
       case 2:
         ab_vec = Eigen::Vector3d( cluster_list.at(i).at(0).x-cluster_list.at(i).at(1).x,
@@ -830,6 +1013,7 @@ void polygon_cluster_visual(std::vector< std::vector<kf_tracker_point> > cluster
       polygon_vec.push_back(clusterObject.GetPolygon());
       bbox_array.boxes.push_back(clusterObject.GetBoundingBox());
       record_moving_cluster_poly.push_back(high_vel);
+      record_ambiguous_cluster.push_back(ambiguous);
     }
   }
   // visualization_msgs::MarkerArray ClusterHulls;
@@ -848,6 +1032,10 @@ void polygon_cluster_visual(std::vector< std::vector<kf_tracker_point> > cluster
     // ObjHull.color.r = 255.0f/255.0f;
     // ObjHull.color.g = 0.0f/255.0f;
     // ObjHull.color.b = 0.0f/255.0f;
+    // blue
+    ObjHull.color.r = 0.0f/255.0f;
+    ObjHull.color.g = 204.0f/255.0f;
+    ObjHull.color.b = 204.0f/255.0f;
     if(record_moving_cluster_poly.at(cluster_idx)){
       // ObjHull.color.r = 0.0f/255.0f;
       // ObjHull.color.g = 255.0f/255.0f;
@@ -855,7 +1043,16 @@ void polygon_cluster_visual(std::vector< std::vector<kf_tracker_point> > cluster
       // ObjHull.color.r = 250.0f/255.0f;
       // ObjHull.color.g = 112.0f/255.0f;
       // ObjHull.color.b = 188.0f/255.0f;
-      ObjHull.scale.x = ObjHull.scale.y = ObjHull.scale.z = 0.2;
+      ObjHull.scale.x = ObjHull.scale.y = ObjHull.scale.z = 0.5;
+    }
+    if(record_ambiguous_cluster.at(cluster_idx)){
+      ObjHull.color.r = 0.0f/255.0f;
+      ObjHull.color.g = 255.0f/255.0f;
+      ObjHull.color.b = 0.0f/255.0f;
+      ObjHull.color.r = 250.0f/255.0f;
+      ObjHull.color.g = 112.0f/255.0f;
+      ObjHull.color.b = 188.0f/255.0f;
+      ObjHull.scale.x = ObjHull.scale.y = ObjHull.scale.z = 0.5;
     }
     ObjHull.lifetime = ros::Duration(dt-0.01);
 
@@ -882,6 +1079,10 @@ void polygon_cluster_visual(std::vector< std::vector<kf_tracker_point> > cluster
     // ObjHull.color.r = 255.0f/255.0f;
     // ObjHull.color.g = 0.0f/255.0f;
     // ObjHull.color.b = 0.0f/255.0f;
+    // blue
+    ObjHull.color.r = 0.0f/255.0f;
+    ObjHull.color.g = 204.0f/255.0f;
+    ObjHull.color.b = 204.0f/255.0f;
     if(record_moving_cluster_single.at(cluster_idx)){
       // ObjHull.color.r = 0.0f/255.0f;
       // ObjHull.color.g = 255.0f/255.0f;
@@ -889,7 +1090,16 @@ void polygon_cluster_visual(std::vector< std::vector<kf_tracker_point> > cluster
       // ObjHull.color.r = 250.0f/255.0f;
       // ObjHull.color.g = 112.0f/255.0f;
       // ObjHull.color.b = 188.0f/255.0f;
-      ObjHull.scale.x = 0.2;
+      ObjHull.scale.x = 0.5;
+    }
+    if(record_ambiguous_cluster_single.at(cluster_idx)){
+      ObjHull.color.r = 0.0f/255.0f;
+      ObjHull.color.g = 255.0f/255.0f;
+      ObjHull.color.b = 0.0f/255.0f;
+      ObjHull.color.r = 250.0f/255.0f;
+      ObjHull.color.g = 112.0f/255.0f;
+      ObjHull.color.b = 188.0f/255.0f;
+      ObjHull.scale.x = 0.5;
     }
     ObjHull.lifetime = ros::Duration(dt-0.01);
 
@@ -973,63 +1183,6 @@ void vel_marker(std::vector< radar_scenes::RadarScenesConstPtr > call_back_msg_l
 	vis_vel_comp.publish( marker_array_comp );
 }
 
-void rls_vel_marker(std::vector<kf_tracker_point> rls_points){
-  visualization_msgs::MarkerArray rls_marker;
-  int count_vel_num = 0;
-  for(auto pt=rls_points.begin();pt!=rls_points.end();pt++){
-    visualization_msgs::Marker marker;
-    marker.header.frame_id = MAP_FRAME;
-    marker.header.stamp = ros::Time();
-    marker.id = count_vel_num++;
-    marker.type = visualization_msgs::Marker::ARROW;
-    marker.action = visualization_msgs::Marker::ADD;
-    tf::Point map2car_pt(pt->x,pt->y,0);
-    marker.pose.position.x = map2car_pt.x();
-    marker.pose.position.y = map2car_pt.y();
-    marker.pose.position.z = 5;
-    double rls_vx = pt->x_v;
-    double rls_vy = pt->y_v;
-    float theta = atan2(rls_vy,
-                        rls_vx);
-    tf2::Quaternion Q;
-    Q.setRPY( 0, 0, theta );
-    marker.pose.orientation = tf2::toMsg(Q);
-    marker.scale = vel_comp_color.scale;
-    // vel length
-    marker.scale.x = sqrt(pow(rls_vy,2) + 
-                          pow(rls_vx,2));
-    
-    if(marker.scale.x<1){
-      marker.color.a = 0;
-    }
-    marker.color = vel_color.color;
-    marker.color.a = 0.9;
-    // marker.color.r = 0;
-    // marker.color.g = 1.0;
-    // marker.color.b = 0;
-
-    rls_marker.markers.push_back(marker);
-    
-  }
-
-  if(count_vel_num > vel_marker_max_size)
-    vel_marker_max_size = count_vel_num;
-  for(int a=count_vel_num;a<vel_marker_max_size;a++){
-    visualization_msgs::Marker marker;
-		marker.header.frame_id = MAP_FRAME;
-		marker.header.stamp = ros::Time();
-		marker.id = a;
-		marker.type = visualization_msgs::Marker::ARROW;
-		marker.action = visualization_msgs::Marker::DELETE;
-		marker.pose.position.x = 0;
-		marker.pose.position.y = 0;
-		marker.pose.position.z = 1;
-    marker.color.a = 0;
-		rls_marker.markers.push_back(marker);
-  }
-	vis_vel_rls.publish(rls_marker);
-}
-
 // show the tracking trajectory
 void show_trajectory(){
   int k=0;
@@ -1065,7 +1218,10 @@ void show_trajectory(){
       marker.pose.orientation.w = 1.0;
       marker.scale = itri_tra_color.scale;
       marker.color = itri_tra_color.color;
-
+      // purple
+      marker.color.r = 204.0f/255.0f;
+      marker.color.g = 153.0f/255.0f;
+      marker.color.b = 255.0f/255.0f;
       // history pts marker
       P.header.frame_id = MAP_FRAME;
       P.header.stamp = radar_stamp;
@@ -1129,7 +1285,7 @@ void show_trajectory(){
       pred_point_array.markers.push_back(Predict_p);
 
       // Show the tracking velocity
-      if(filters.at(k).track_frame > 5){
+      if(filters.at(k).track_frame > 5 && filters.at(k).motion==MOTION_STATE::move){
         visualization_msgs::Marker vel_marker;
         vel_marker.header.frame_id = MAP_FRAME;
         vel_marker.header.stamp = radar_stamp;
@@ -1487,6 +1643,12 @@ void cluster_KFT(std::vector<int> cluster_tracking_result){
   
   // record the cluster tracking result
   std::vector<bool> cluster_tracking_bool_vec(past_radars_with_cluster.size(),false);
+  std::vector<int> unmatch_filters;
+  std::vector< std::vector<cluster_point> > track_cluster_result;
+
+  pcl::PointCloud<pcl::PointXYZI>::Ptr in_filter_points(new pcl::PointCloud<pcl::PointXYZI>);
+  sensor_msgs::PointCloud2::Ptr in_filter_cloud(new sensor_msgs::PointCloud2);
+  in_filter_points->clear();
 
   for(int k=0; k<filters.size(); k++){
     geometry_msgs::Point pred_v = filters.at(k).pred_v;
@@ -1512,10 +1674,9 @@ void cluster_KFT(std::vector<int> cluster_tracking_result){
         continue;
       }
     }
-
-    //-1 for non matched tracks
+    // matched tracks
     if (!new_tracker){
-      Eigen::Vector3d dist_diff(cens.at(cluster_id).x-pred_pos.x,cens.at(cluster_id).y-pred_pos.y,0);
+      // Eigen::Vector3d dist_diff(cens.at(cluster_id).x-pred_pos.x,cens.at(cluster_id).y-pred_pos.y,0);
       obj_id[cluster_id] = filters.at(k).uuid;
       if(filters.at(k).track_frame > tracking_stable_frames)
         tracking_frame_obj_id[cluster_id] = filters.at(k).uuid;
@@ -1525,6 +1686,17 @@ void cluster_KFT(std::vector<int> cluster_tracking_result){
       if(cens.at(cluster_id).vel < motion_vel_threshold && filters.at(k).motion != MOTION_STATE::stop){
         filters.at(k).motion = MOTION_STATE::slow_down;
         cens.at(cluster_id).motion = MOTION_STATE::slow_down;
+        if(cens.at(cluster_id).vel>=motion_vel_threshold){
+          track_cluster_result.push_back(current_scan_cluster_result[cluster_id]);
+          for(auto cluster_pt:current_scan_cluster_result[cluster_id]){
+            pcl::PointXYZI pt;
+            pt.x = cluster_pt.x;
+            pt.y = cluster_pt.y;
+            pt.z = cluster_pt.z;
+            pt.intensity = filters.at(k).uuid;
+            in_filter_points->push_back(pt);
+          }
+        }
       }
       else if(cens.at(cluster_id).vel < motion_vel_threshold){
         filters.at(k).motion = MOTION_STATE::stop;
@@ -1534,6 +1706,17 @@ void cluster_KFT(std::vector<int> cluster_tracking_result){
       {
         filters.at(k).motion = MOTION_STATE::move;
         cens.at(cluster_id).motion = MOTION_STATE::move;
+        if(cens.at(cluster_id).vel>=motion_vel_threshold){
+          track_cluster_result.push_back(current_scan_cluster_result[cluster_id]);
+          for(auto cluster_pt:current_scan_cluster_result[cluster_id]){
+            pcl::PointXYZI pt;
+            pt.x = cluster_pt.x;
+            pt.y = cluster_pt.y;
+            pt.z = cluster_pt.z;
+            pt.intensity = filters.at(k).uuid;
+            in_filter_points->push_back(pt);
+          }
+        }
       }
       
       geometry_msgs::Point tracking_pt_history;
@@ -1554,6 +1737,7 @@ void cluster_KFT(std::vector<int> cluster_tracking_result){
     else
     {
       filters.at(k).tracking_state = TRACK_STATE::missing;
+      unmatch_filters.push_back(k);
     }
     
 
@@ -1580,13 +1764,112 @@ void cluster_KFT(std::vector<int> cluster_tracking_result){
   }
   vector<int> marker_obj_id = obj_id;
   //initiate new tracks for not-matched(obj_id = -1) cluster
+  std::vector<std::pair<int,int>> update_pair;
   for (i=0; i<cens.size(); i++){
+    // Filter out the centers that have low velocity
+    if(cens.at(i).vel<motion_vel_threshold){
+      continue;
+    }
     if(obj_id.at(i) == -1){
-      int track_uuid = new_track(cens.at(i),i,cluster_tracking_result.at(i));
-      obj_id.at(i) = track_uuid;
+      bool check_unmatched = false;
+      for(auto it=unmatch_filters.begin();it!=unmatch_filters.end();){
+        geometry_msgs::Point pred_pos = filters.at(*it).pred_pose;
+        Eigen::Vector3d dist_diff(cens.at(i).x-pred_pos.x,cens.at(i).y-pred_pos.y,0);
+        if(dist_diff.norm()<2){
+          // std::cout<<"cluster idx: "<< cluster_tracking_result[i]<<", tracking uuid: "<< filters.at(*it).uuid<< std::endl;
+          obj_id[i] = filters.at(*it).uuid;
+          marker_obj_id[i] = filters.at(*it).uuid;
+          if(filters.at(*it).track_frame > tracking_stable_frames)
+            tracking_frame_obj_id[i] = filters.at(*it).uuid;
+          filters.at(*it).cluster_idx = i;
+          filters.at(*it).tracking_state = TRACK_STATE::tracking;
+          // check the traker's motion state
+          if(cens.at(i).vel>=motion_vel_threshold){
+            track_cluster_result.push_back(current_scan_cluster_result[i]);
+            for(auto cluster_pt:current_scan_cluster_result[i]){
+              pcl::PointXYZI pt;
+              pt.x = cluster_pt.x;
+              pt.y = cluster_pt.y;
+              pt.z = cluster_pt.z;
+              pt.intensity = filters.at(*it).uuid;
+              in_filter_points->push_back(pt);
+            }
+          }
+          if(cens.at(i).vel < motion_vel_threshold && filters.at(*it).motion != MOTION_STATE::stop){
+            filters.at(*it).motion = MOTION_STATE::slow_down;
+            cens.at(i).motion = MOTION_STATE::slow_down;
+            // if(cens.at(i).vel>=motion_vel_threshold){
+            //   track_cluster_result.push_back(current_scan_cluster_result[i]);
+            //   for(auto cluster_pt:current_scan_cluster_result[i]){
+            //     pcl::PointXYZI pt;
+            //     pt.x = cluster_pt.x;
+            //     pt.y = cluster_pt.y;
+            //     pt.z = cluster_pt.z;
+            //     pt.intensity = filters.at(*it).uuid;
+            //     in_filter_points->push_back(pt);
+            //   }
+            // }
+          }
+          else if(cens.at(i).vel < motion_vel_threshold){
+            filters.at(*it).motion = MOTION_STATE::stop;
+            cens.at(i).motion = MOTION_STATE::stop;
+          }
+          else
+          {
+            filters.at(*it).motion = MOTION_STATE::move;
+            cens.at(i).motion = MOTION_STATE::move;
+            if(cens.at(i).vel>=motion_vel_threshold){
+              track_cluster_result.push_back(current_scan_cluster_result[i]);
+              for(auto cluster_pt:current_scan_cluster_result[i]){
+                pcl::PointXYZI pt;
+                pt.x = cluster_pt.x;
+                pt.y = cluster_pt.y;
+                pt.z = cluster_pt.z;
+                pt.intensity = filters.at(*it).uuid;
+                in_filter_points->push_back(pt);
+              }
+            }
+          }
+          
+          geometry_msgs::Point tracking_pt_history;
+          tracking_pt_history.x = cens.at(i).x;
+          tracking_pt_history.y = cens.at(i).y;
+          tracking_pt_history.z = cens.at(i).z;
+          filters.at(*it).history.push_back(tracking_pt_history);
+
+          geometry_msgs::Point tracking_pt_history_smooth;
+          tracking_pt_history_smooth.x = filters.at(*it).kf.statePre.at<float>(0);
+          tracking_pt_history_smooth.y = filters.at(*it).kf.statePre.at<float>(1);
+          tracking_pt_history_smooth.z = filters.at(*it).kf.statePre.at<float>(2);
+          filters.at(*it).history_smooth.push_back(tracking_pt_history_smooth);
+          
+          if(filters.at(*it).track_frame>10)
+            cluster_tracking_bool_vec.at(i) = true;
+          check_unmatched = true;
+        }
+        if(check_unmatched){
+          update_pair.push_back(std::pair<int,int>(i,filters.at(*it).uuid));
+          unmatch_filters.erase(it);
+          break;
+        }
+        else{
+          it++;
+        }
+        
+      }
+      if(!check_unmatched){
+        if(cens.at(i).vel>=motion_vel_threshold){
+          track_cluster_result.push_back(current_scan_cluster_result[i]);
+        }  
+        int track_uuid = new_track(cens.at(i),i,cluster_tracking_result.at(i));
+        obj_id.at(i) = track_uuid;
+      }
     }
   }
-
+  // if(use_score_cluster){
+  //   score_cluster(track_cluster_result);
+  // }
+  dbtrack_seg.update_tracker_association(update_pair);
   if(output_obj_id_result){
     std::cout<<"\033[1;33mThe obj_id after new track:\033[0m\n";
     for (i=0; i<cens.size(); i++){
@@ -1594,6 +1877,10 @@ void cluster_KFT(std::vector<int> cluster_tracking_result){
       }
     std::cout<<endl;
   }
+  pcl::toROSMsg(*in_filter_points,*in_filter_cloud);
+  in_filter_cloud->header.frame_id = MAP_FRAME;
+  in_filter_cloud->header.stamp = radar_stamp;
+  pub_in_filter.publish(in_filter_cloud);
   //deal with lost tracks and let it remain const velocity -> update pred_pose to meas correct
   for(std::vector<track>::iterator pit = filters.begin (); pit != filters.end ();){
       if( (*pit).tracking_state == TRACK_STATE::missing  )//true for 0
@@ -2106,65 +2393,6 @@ void first_frame_KFT(std::vector<int> cluster_tracking_result={}){
   return;
 }
 
-void output_score(double beta, v_measure_score result){
-  string dir_path = ros::package::getPath("track") + "/cluster_score/" + to_string(ros::WallTime::now().toBoost().date()) + "/";
-  string csv_name_with_para;
-  stringstream eps_s,Nmin_s;
-  eps_s << cluster_eps;
-  Nmin_s << cluster_Nmin;
-  csv_name_with_para = "Eps-"+eps_s.str()+"_Nmin-"+Nmin_s.str()+"_";
-  string csv_file_name = csv_name_with_para + score_file_name + ".csv";
-  string output_path = dir_path + csv_file_name;
-  if(! boost::filesystem::exists(dir_path)){
-    boost::filesystem::create_directories(dir_path);   
-  }
-  if(filename_change){
-    filename_change = false;
-    score_frame = 1;
-    result.frame = 1;
-  }
-  if(result.frame == 1){
-    ofstream file;
-    file.open(output_path, ios::out);
-    file << "frame" << ",";
-    file << "obj num" << ",";
-    file << "correct-obj num" << ",";
-    file << "over-obj num" << ",";
-    file << "under-obj num" << ",";
-    file << "no-obj num" << ",";
-    file << "V measure score (beta=" << fixed << setprecision(2) << beta << ")" << ",";
-    file << "Homogeneity" << ",";
-    file << "H(C|K)" << ",";
-    file << "H(C)" << ",";
-    file << "Completeness" << ",";
-    file << "H(K|C)" << ",";
-    file << "H(K)" << ",";
-    file << "Scene Num" << ",";
-    file << "Ave vel" << endl;
-    file.close();
-  }
-  ofstream file;
-  file.open(output_path, ios::out|ios::app);
-  file << setprecision(0) << result.frame << ",";
-  file << setprecision(0) << result.object_num << ",";
-  file << setprecision(0) << result.good_cluster << ",";
-  file << setprecision(0) << result.multi_cluster << ",";
-  file << setprecision(0) << result.under_cluster << ",";
-  file << setprecision(0) << result.no_cluster << ",";
-  file << fixed << setprecision(3);
-  file << result.v_measure_score << ",";
-  file << result.homo << ",";
-  file << result.h_ck << ",";
-  file << result.h_c << ",";
-  file << result.comp << ",";
-  file << result.h_kc << ",";
-  file << result.h_k << ",";
-  file << result.scene_num << ",";
-  file << result.ave_doppler_vel << endl;
-  file.close();
-  return;
-}
-
 void score_cluster(std::vector< std::vector<kf_tracker_point> > ResultCluster){
   std::string LABEL_STR[12]={ "CAR",
                             "LARGE_VEHICLE",
@@ -2182,7 +2410,7 @@ void score_cluster(std::vector< std::vector<kf_tracker_point> > ResultCluster){
   std::map<std::string,std::vector<kf_tracker_point>> GT_Map;
   std::map<std::string,std::pair<int,int>> LabelMap;  // pair:track_id, label_id
   int track_id = 0;
-  pcl::PointCloud<pcl::PointXYZI>::Ptr gt_points(new pcl::PointCloud<pcl::PointXYZI>);
+  pcl::PointCloud<pcl::PointXYZRGB>::Ptr gt_points(new pcl::PointCloud<pcl::PointXYZRGB>);
   sensor_msgs::PointCloud2::Ptr gt_cloud(new sensor_msgs::PointCloud2);
   for(auto msg:call_back_msg_list){
     for(auto pt:msg->points){
@@ -2196,29 +2424,187 @@ void score_cluster(std::vector< std::vector<kf_tracker_point> > ResultCluster){
       GT_Map[pt.track_id].push_back(cluster_pt);
       if(LabelMap.find(pt.track_id)==LabelMap.end())
         LabelMap[pt.track_id] = std::pair<int,int>(track_id++,pt.label_id);
-      pcl::PointXYZI pcl_pt;
-      pcl_pt.x = pt.pose_seq.position.x;
-      pcl_pt.y = pt.pose_seq.position.y;
-      pcl_pt.z = 0;
-      pcl_pt.intensity = LabelMap[pt.track_id].first;
-      gt_points->points.push_back(pcl_pt);
+      // pcl::PointXYZI pcl_pt;
+      // pcl_pt.x = pt.pose_seq.position.x;
+      // pcl_pt.y = pt.pose_seq.position.y;
+      // pcl_pt.z = 0;
+      // pcl_pt.intensity = LabelMap[pt.track_id].first;
+      pcl::PointXYZRGB pcl_color_pt;
+      pcl_color_pt.x = pt.pose_seq.position.x;
+      pcl_color_pt.y = pt.pose_seq.position.y;
+      pcl_color_pt.z = 0;
+      std_msgs::ColorRGBA c;
+      c.a = 1.0;
+      switch (LabelMap[pt.track_id].first % 20) {
+      case 0:
+      {
+        c.r = 0.121569;
+        c.g = 0.466667;
+        c.b = 0.705882;
+      }
+      break;
+      case 1:
+      {
+        c.r = 0.682353;
+        c.g = 0.780392;
+        c.b = 0.909804;
+      }
+      break;
+      case 2:
+      {
+        c.r = 1.000000;
+        c.g = 0.498039;
+        c.b = 0.054902;
+      }
+      break;
+      case 3:
+      {
+        c.r = 1.000000;
+        c.g = 0.733333;
+        c.b = 0.470588;
+      }
+      break;
+      case 4:
+      {
+        c.r = 0.172549;
+        c.g = 0.627451;
+        c.b = 0.172549;
+      }
+      break;
+      case 5:
+      {
+        c.r = 0.596078;
+        c.g = 0.874510;
+        c.b = 0.541176;
+      }
+      break;
+      case 6:
+      {
+        c.r = 0.839216;
+        c.g = 0.152941;
+        c.b = 0.156863;
+      }
+      break;
+      case 7:
+      {
+        c.r = 1.000000;
+        c.g = 0.596078;
+        c.b = 0.588235;
+      }
+      break;
+      case 8:
+      {
+        c.r = 0.580392;
+        c.g = 0.403922;
+        c.b = 0.741176;
+      }
+      break;
+      case 9:
+      {
+        c.r = 0.772549;
+        c.g = 0.690196;
+        c.b = 0.835294;
+      }
+      break;
+      case 10:
+      {
+        c.r = 0.549020;
+        c.g = 0.337255;
+        c.b = 0.294118;
+      }
+      break;
+      case 11:
+      {
+        c.r = 0.768627;
+        c.g = 0.611765;
+        c.b = 0.580392;
+      }
+      break;
+      case 12:
+      {
+        c.r = 0.890196;
+        c.g = 0.466667;
+        c.b = 0.760784;
+      }
+      break;
+      case 13:
+      {
+        c.r = 0.968627;
+        c.g = 0.713725;
+        c.b = 0.823529;
+      }
+      break;
+      case 14:
+      {
+        c.r = 0.498039;
+        c.g = 0.498039;
+        c.b = 0.498039;
+      }
+      break;
+      case 15:
+      {
+        c.r = 0.780392;
+        c.g = 0.780392;
+        c.b = 0.780392;
+      }
+      break;
+      case 16:
+      {
+        c.r = 0.737255;
+        c.g = 0.741176;
+        c.b = 0.133333;
+      }
+      break;
+      case 17:
+      {
+        c.r = 0.858824;
+        c.g = 0.858824;
+        c.b = 0.552941;
+      }
+      break;
+      case 18:
+      {
+        c.r = 0.090196;
+        c.g = 0.745098;
+        c.b = 0.811765;
+      }
+      break;
+      case 19:
+      {
+        c.r = 0.619608;
+        c.g = 0.854902;
+        c.b = 0.898039;
+      }
+      break;
+      }
+      pcl_color_pt.r = c.r*255;
+      pcl_color_pt.g = c.g*255;
+      pcl_color_pt.b = c.b*255;
+      gt_points->points.push_back(pcl_color_pt);
     }
   }
   for(auto vec:GT_Map){
     GTCluster.push_back(vec.second);
+    Eigen::Vector2d centroid_v(0, 0);
+    for(auto pt:vec.second){
+      centroid_v += Eigen::Vector2d(pt.x_v, pt.y_v);
+    }
+    centroid_v /= vec.second.size();
     std::cout<<"Track ID: "<<vec.first
              <<", Label: "<<LABEL_STR[LabelMap[vec.first].second]
-             <<", size: "<<vec.second.size()<<std::endl;
+             <<", size: "<<vec.second.size()
+             <<", vel: "<<centroid_v.norm()<<std::endl;
     
   }
   pcl::toROSMsg(*gt_points,*gt_cloud);
   gt_cloud->header.frame_id = MAP_FRAME;
   gt_cloud->header.stamp = radar_stamp;
   pub_gt_cloud.publish(gt_cloud);
-
-  dbtrack_seg.cluster_score(GTCluster,ResultCluster);
-  dbtrack_seg.f1_score(GTCluster,ResultCluster);
-
+  polygon_gt_visual(GTCluster);
+  if(use_score_cluster){
+    // dbtrack_seg.cluster_score(GTCluster,ResultCluster);
+    clusterIOU = dbtrack_seg.f1_score(GTCluster,ResultCluster);
+  }
 }
 
 void transform_radar_msg_to_cluster_data( const radar_scenes::RadarScenesConstPtr& msg, int &radar_id_count,
@@ -2267,7 +2653,9 @@ void transform_radar_msg_to_cluster_data( const radar_scenes::RadarScenesConstPt
     pt.y = c.y;
     pt.z = c.z;
     pt.intensity = msg->points[i].rcs;
-    pub_filter_points->push_back(pt);
+    if(c.vel>=motion_vel_threshold){
+      pub_filter_points->push_back(pt);
+    }
     cluster_data.push_back(c);
     
   }
@@ -2276,17 +2664,23 @@ void transform_radar_msg_to_cluster_data( const radar_scenes::RadarScenesConstPt
 void cluster_state(){
   // cluster the points with DBSCAN-based method
   if(firstFrame){
-    dbtrack_seg.set_parameter(cluster_eps, cluster_Nmin, cluster_history_frames, cluster_dt_weight);
+    dbtrack_seg.reset();
+    dbtrack_seg.set_parameter(cluster_eps, eps_min, eps_max, cluster_Nmin, cluster_history_frames, cluster_dt_weight, v_thresh);
     dbtrack_seg.set_output_info(cluster_track_msg,motion_eq_optimizer_msg,rls_msg);
-    dbtrack_seg.training_dbtrack_para(false);
+    dbtrack_seg.set_dynamic(use_dynamic_eps, use_dynamic_Nmin, use_dynamic_vel);
+    dbtrack_seg.set_clustr_score_name(output_score_dir_name);
+    // dbtrack_seg.training_dbtrack_para(false);
   }
   double CLUSTER_START, CLUSTER_END;
   CLUSTER_START = clock();
   dbtrack_seg.scan_num = call_back_num;
+  dbtrack_seg.time_stamp = radar_stamp.toSec();
   dbtrack_seg.data_period = dt;
   std::vector< std::vector<kf_tracker_point> > dbtrack_cluster, dbtrack_cluster_current;
   dbtrack_cluster_current = dbtrack_seg.cluster(cens);    // the current scan cluster result
   std::vector<int> cluster_tracking_result = dbtrack_seg.cluster_tracking_result(); // record the cluster-tracking id
+  // std::vector<int> ambiguous_idx = dbtrack_seg.ambiguous_cluster();
+
   dbtrack_cluster.clear();
   dbtrack_cluster = dbtrack_seg.cluster_with_past_now();  // the cluster result that consist the past data
   CLUSTER_END = clock();
@@ -2296,23 +2690,29 @@ void cluster_state(){
   EXE_INFO(std::endl);
 
   // score the cluster performance
-  // if(use_score_cluster && get_label && (fabs(label_vec.at(0).marker.header.stamp.toSec()-radar_stamp.toSec()) <= 0.08))
-  score_cluster(dbtrack_cluster_current);
-  
+  if(use_score_cluster)
+    score_cluster(dbtrack_cluster_current);
+
+  // Viz the Dynamic Parameters result form the MLP. Need cens to viz!!
+  if(use_dynamic_eps&&use_dynamic_Nmin&&use_dynamic_vel){
+    dynamic_param dynamic_dbscan_result = dbtrack_seg.dynamic_viz();
+    dynamic_viz_(dynamic_dbscan_result, cens);
+    clusterMotionVth = dynamic_dbscan_result.Vthresh;
+
+  }
   cens.clear();
   cens = dbtrack_seg.get_center();        // the cluster center based on the current points
-  rls_vel_marker(cens);
   
   // cluster visualization
   if(!viz_cluster_with_past){
     // For current cluster only
     color_cluster(dbtrack_cluster_current,true,cluster_tracking_result);
-    polygon_cluster_visual(dbtrack_cluster_current);
+    polygon_cluster_visual(dbtrack_cluster_current, cluster_tracking_result);
   }
   else{
     // Cluster contains past and current
     color_cluster(dbtrack_cluster,true,cluster_tracking_result);
-    polygon_cluster_visual(dbtrack_cluster);
+    polygon_cluster_visual(dbtrack_cluster, cluster_tracking_result);
   }
 
   // publish the history radar points
@@ -2321,6 +2721,9 @@ void cluster_state(){
   cluster_tracking_result_dbpda.clear();
   cluster_tracking_result_dbpda.shrink_to_fit();
   cluster_tracking_result_dbpda = cluster_tracking_result;
+  // store the current cluster result and combine the tracking result to viz the clustering result
+  current_scan_cluster_result.clear();current_scan_cluster_result.shrink_to_fit();
+  current_scan_cluster_result = dbtrack_cluster_current;
 }
 
 void viz_overlay_radar(){
@@ -2395,11 +2798,100 @@ void radar_process(){
   }
   
   // republish filtered radar points
-  pcl::toROSMsg(*in_filter_points,*in_filter_cloud);
-  in_filter_cloud->header.frame_id = MAP_FRAME;
-  in_filter_cloud->header.stamp = radar_stamp;
-  pub_in_filter.publish(in_filter_cloud);
+  // pcl::toROSMsg(*in_filter_points,*in_filter_cloud);
+  // in_filter_cloud->header.frame_id = MAP_FRAME;
+  // in_filter_cloud->header.stamp = radar_stamp;
+  // pub_in_filter.publish(in_filter_cloud);
   
+  if(dbtrack_para_train){
+    if(firstFrame){
+      dbtrack_seg.reset();
+      dbtrack_seg.set_parameter(cluster_eps, eps_min, eps_max, cluster_Nmin, cluster_history_frames, cluster_dt_weight, v_thresh);
+      dbtrack_seg.set_output_info(cluster_track_msg,motion_eq_optimizer_msg,rls_msg);
+      firstFrame = false;
+    }
+    dbtrack_seg.scan_num = call_back_num;
+    dbtrack_seg.data_period = dt;
+    dbtrack_seg.time_stamp = radar_stamp.toSec();
+    std::string LABEL_STR[12]={ "CAR",
+                              "LARGE_VEHICLE",
+                              "TRUCK",
+                              "BUS",
+                              "TRAIN",
+                              "BICYCLE",
+                              "TWO_WHEELER",
+                              "PEDESTRIAN",
+                              "GROUP_PEDESTRIAN",
+                              "ANIMAL",
+                              "DYNAMIC_OBJECT",
+                              "STATIC_OBJECT"};
+    std::vector< std::vector<kf_tracker_point> > GTCluster;
+    std::map<std::string,std::vector<kf_tracker_point>> GT_Map;
+    std::map<std::string,std::pair<int,int>> LabelMap;  // pair:track_id, label_id
+    int track_id = 0;
+    pcl::PointCloud<pcl::PointXYZI>::Ptr gt_points(new pcl::PointCloud<pcl::PointXYZI>);
+    sensor_msgs::PointCloud2::Ptr gt_cloud(new sensor_msgs::PointCloud2);
+    int scan_totoal_numbers = 0;
+    sensor_id = -1;
+    for(auto msg:call_back_msg_list){
+      sensor_id++;
+      for(auto pt:msg->points){
+        scan_totoal_numbers++;
+        if(pt.track_id=="")
+          continue;
+        tf::Transform radar2map;
+        radar2map = car2map*radar2car.at(sensor_id);
+        radar2map.setOrigin(tf::Vector3(0,0,0));
+        tf::Vector3 velocity_vec;
+        velocity_vec.setValue(pt.vr_compensated*std::cos(pt.azimuth),
+                              pt.vr_compensated*std::sin(pt.azimuth),
+                              0);
+        velocity_vec = radar2map*velocity_vec;
+
+        kf_tracker_point c;
+        c.x = pt.pose_seq.position.x;
+        c.y = pt.pose_seq.position.y;
+        c.z = pt.pose_seq.position.z;
+        c.r = pt.range;
+        c.x_v = velocity_vec.x();
+        c.y_v = velocity_vec.y();
+        c.z_v = 0;
+        c.vel_ang = pt.azimuth;
+        c.vel = std::fabs(pt.vr_compensated);
+        c.vel_dir = (pt.vr_compensated>=0 ? true : false);
+        c.cluster_id = -1;  // -1: not clustered
+        c.tracking_id = -1; // -1: not be tracked
+        c.visited = false;
+        c.id = radar_id_count++;
+        c.scan_time = call_back_num;
+        c.rcs = pt.rcs;
+        GT_Map[pt.track_id].push_back(c);
+        if(LabelMap.find(pt.track_id)==LabelMap.end())
+          LabelMap[pt.track_id] = std::pair<int,int>(track_id++,pt.label_id);
+        pcl::PointXYZI pcl_pt;
+        pcl_pt.x = c.x;
+        pcl_pt.y = c.y;
+        pcl_pt.z = 0;
+        pcl_pt.intensity = LabelMap[pt.track_id].first;
+        gt_points->points.push_back(pcl_pt);
+      }
+    }
+    for(auto vec:GT_Map){
+      GTCluster.push_back(vec.second);
+      std::cout<<"Track ID: "<<vec.first
+              <<", Label: "<<LABEL_STR[LabelMap[vec.first].second]
+              <<", size: "<<vec.second.size()<<std::endl;
+      
+    }
+    // pcl::toROSMsg(*gt_points,*gt_cloud);
+    // gt_cloud->header.frame_id = MAP_FRAME;
+    // gt_cloud->header.stamp = radar_stamp;
+    // pub_gt_cloud.publish(gt_cloud);
+    
+    // dbtrack_seg.train_radarScenes(GT_Map,scan_totoal_numbers);
+    dbtrack_seg.Nmin_training_cluster(GTCluster,cens);
+    return;
+  }
   // Cluster the radar points
   cluster_state();
 
@@ -2423,6 +2915,11 @@ void radar_process(){
     END_TIME = clock();
     EXE_INFO("\033[1;42mKFT Execution time: " << (END_TIME - START_TIME) / CLOCKS_PER_SEC << "s\033[0m");
     EXE_INFO(std::endl);
+  }
+  else{
+    if(firstFrame){
+      firstFrame = false;
+    }
   }
   return;
 }
@@ -2454,6 +2951,14 @@ void radar_callback(const radar_scenes::RadarScenesConstPtr& msg_1,
                     const radar_scenes::RadarScenesConstPtr& msg_2,
                     const radar_scenes::RadarScenesConstPtr& msg_3,
                     const radar_scenes::RadarScenesConstPtr& msg_4){
+  if(filename_change){
+    filename_change = false;
+    firstFrame = true;
+    dbtrack_seg.reset();
+    call_back_num = 0;
+    filters.clear();filters.shrink_to_fit();
+    id_count = 0;
+  }
   int radar_point_size = msg_1->points.size() + msg_2->points.size() + msg_3->points.size() + msg_4->points.size();
   std::cout<<"\n\n\033[1;4;100m"<<++call_back_num<<" Call Back radar points:"<<radar_point_size
            <<"("<<msg_1->points.size()<<"+"<<msg_2->points.size()<<"+"<<msg_3->points.size()<<"+"<<msg_4->points.size()<<")\033[0m"<<endl;
@@ -2468,7 +2973,7 @@ void radar_callback(const radar_scenes::RadarScenesConstPtr& msg_1,
   radar_stamp = msg_1->header.stamp;
   std::cout << std::fixed; std::cout.precision(3);
   std::cout<<"Radar time:"<<msg_1->header.stamp.toSec()<<" / "<<msg_2->header.stamp.toSec()<<" / "<<msg_3->header.stamp.toSec()<<" / "<<msg_4->header.stamp.toSec()<<endl;
-  
+  std::cout << "Bag: "<<score_file_name<<std::endl;
   call_back_msg_list.clear();
   call_back_msg_list.push_back(msg_1);
   call_back_msg_list.push_back(msg_2);
@@ -2482,10 +2987,14 @@ void radar_callback(const radar_scenes::RadarScenesConstPtr& msg_1,
 }
 
 void get_bag_info_callback(const rosgraph_msgs::LogConstPtr& log_msg){
+  if(log_msg->function.find("Player::publish")==log_msg->function.npos){
+    return;
+  }
   if(log_msg->msg.find(".bag") != log_msg->msg.npos){
     filename_change = true;
     score_file_name = log_msg->msg;
-    int bag_start = score_file_name.find("s");
+    // ROS_INFO("Bag Name: %s",score_file_name);
+    int bag_start = score_file_name.find("seq");
     int bag_end = score_file_name.find(".");
     score_file_name = score_file_name.substr(bag_start,bag_end-bag_start);
     dbtrack_seg.get_training_name(score_file_name);
@@ -2511,6 +3020,11 @@ int main(int argc, char** argv){
   pub_cluster_marker = nh.advertise<visualization_msgs::MarkerArray>("cluster_index", 1);
   pub_marker = nh.advertise<visualization_msgs::MarkerArray>("tracking_id", 1);
   pub_filter = nh.advertise<sensor_msgs::PointCloud2>("radar_history",500);
+  pub_eps_cloud = nh.advertise<sensor_msgs::PointCloud2>("eps_cloud",500);
+  pub_overlay_text = nh.advertise<jsk_rviz_plugins::OverlayText>("overlayText",10);
+  for(int i=0;i<pub_color_bar.size();i++){
+    pub_color_bar[i] = nh.advertise<jsk_rviz_plugins::OverlayText>("ColorBar/"+std::to_string(i),1);
+  }
   pub_in_filter = nh.advertise<sensor_msgs::PointCloud2>("inlier_radar",200);
   pub_cluster_center = nh.advertise<sensor_msgs::PointCloud2>("cluster_center",500);
   pub_cluster_pointcloud = nh.advertise<sensor_msgs::PointCloud2>("cluster_radar_front_pointcloud",500);
@@ -2525,6 +3039,7 @@ int main(int argc, char** argv){
   pub_pred = nh.advertise<visualization_msgs::MarkerArray> ("predict_pt", 1);
   pub_anno_cluster = nh.advertise<sensor_msgs::PointCloud2> ("annotation_pub", 300);
   pub_cluster_hull = nh.advertise<visualization_msgs::MarkerArray> ("cluster_hull", 1);
+  pub_GT_cluster_hull = nh.advertise<visualization_msgs::MarkerArray> ("GT_cluster_hull", 1);
   pub_cluster_bbox = nh.advertise<jsk_recognition_msgs::BoundingBoxArray> ("cluster_bbox", 1);
   pub_tracker_cov = nh.advertise<visualization_msgs::MarkerArray> ("tracker_cov", 1);
 
@@ -2547,11 +3062,18 @@ int main(int argc, char** argv){
   nh.param<int> ("kft_id_num"           ,kft_id_num           ,1);
   nh.param<bool>("show_vel_marker"      ,show_vel_marker      ,false);
   nh.param<bool>("use_score_cluster"    ,use_score_cluster    ,false);
+  nh.param<bool>("score_function"       ,score_function       ,false);
   // cluster state parameters
   nh.param<bool>("dbtrack_para_train"   ,dbtrack_para_train   ,false);
-  nh.param<bool>("dbtrack_para_train_direct"   ,dbtrack_para_train_direct   ,false);
-  nh.param<double>("eps"                ,cluster_eps          ,2.5);
+  nh.param<bool>("use_dynamic_eps"      ,use_dynamic_eps      ,true);
+  nh.param<bool>("use_dynamic_Nmin"      ,use_dynamic_Nmin    ,true);
+  nh.param<bool>("use_dynamic_vel"      ,use_dynamic_vel      ,true);
+  nh.param<std::string>("output_score_dir_name"     ,output_score_dir_name   ,"");
+  nh.param<double>("eps"                ,cluster_eps          ,1.5);
+  nh.param<double>("eps_min"            ,eps_min              ,1.0);
+  nh.param<double>("eps_max"            ,eps_max              ,2.0);
   nh.param<int>("Nmin"                  ,cluster_Nmin         ,2);
+  nh.param<double>("v_thresh"           ,v_thresh             ,0.2);
   nh.param<int>("history_frames"        ,cluster_history_frames  ,3);
   nh.param<double>("cluster_dt_weight"  ,cluster_dt_weight    ,0.0);
   nh.param<bool>("viz_cluster_with_past",viz_cluster_with_past,true);
@@ -2560,7 +3082,7 @@ int main(int argc, char** argv){
   nh.param<bool>("rls_msg"              ,rls_msg              ,false);
   
   ros::Subscriber bag_sub;
-  bag_sub = nh.subscribe("rosout",1,&get_bag_info_callback); // sub the bag name
+  bag_sub = nh.subscribe("rosout_agg",10,&get_bag_info_callback); // sub the bag name
   message_filters::Synchronizer<radar_sync>* all_radar_sync_;
   all_radar_sync_ = new message_filters::Synchronizer<radar_sync>(radar_sync(10), sub_1, sub_2, sub_3, sub_4);
   all_radar_sync_->registerCallback(boost::bind(&radar_callback, _1, _2, _3, _4));
@@ -2589,7 +3111,6 @@ int main(int argc, char** argv){
   ROS_INFO("Visualize the cluster with %s" ,viz_cluster_with_past ? "past and now scans":"now scan only");
   // cluster score info
   if(use_score_cluster){
-    ROS_INFO("\tBox bias -> w: %f, l: %f", box_bias_w, box_bias_l);
     ROS_INFO("\tOutput score info : %s"       , output_score_info ? "True" : "False");
     ROS_INFO("\tOutput score mat info : %s"   , output_score_mat_info ? "True" : "False");
     ROS_INFO("\tOutput GT inside points info : %s"   , output_gt_pt_info ? "True" : "False");
@@ -2598,22 +3119,6 @@ int main(int argc, char** argv){
 
   while(ros::ok()){
     ros::spinOnce();
-    // train DBSCAN parameter directly
-    if(dbtrack_para_train_direct){
-      dbtrack_seg.data_period = dt;
-      dbtrack_seg.set_parameter(cluster_eps, cluster_Nmin, cluster_history_frames, cluster_dt_weight);
-      dbtrack_seg.set_output_info(cluster_track_msg,motion_eq_optimizer_msg,rls_msg);
-      dbtrack_seg.training_dbtrack_para(dbtrack_para_train_direct);
-      // visualize the training result
-      std::vector< std::vector<kf_tracker_point> > dbtrack_cluster = dbtrack_seg.cluster_with_past_now();
-      std::vector<int> cluster_tracking_result = dbtrack_seg.cluster_tracking_result();
-      past_radars_with_cluster.clear();
-      past_radars_with_cluster = dbtrack_seg.get_history_points_with_cluster_order();
-      color_cluster(dbtrack_cluster,true,cluster_tracking_result);
-      polygon_cluster_visual(dbtrack_cluster);
-      show_past_radar_points_with_color();
-      dbtrack_para_train_direct = false;
-    }
     pub_marker.publish(m_s);
   }
   return 0;
