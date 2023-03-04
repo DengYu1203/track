@@ -27,9 +27,12 @@
         <!-- log34 multiple vehicles setting -->
         <!-- <param name="eps"                       value="1.0"/> -->
         <param name="eps"                       value="1.5"/>
+        <param name="eps_min"                   value="1.2"/>
+        <param name="eps_max"                   value="2.0"/>
         <!-- <param name="eps"                       value="2.0"/> -->
 
         <param name="Nmin"                      value="2"/>
+        <param name="v_thresh"                  value="0.1"/>
         <param name="history_frames"            value="10"/>
         <param name="cluster_dt_weight"         value="1.5"/>
         <param name="viz_cluster_with_past"     value="true"/>
@@ -37,12 +40,12 @@
         <param name="motion_eq_optimizer_msg"   value="false"/>
         <param name="rls_msg"                   value="false"/>
         <!-- DBSCAN Training Parameter Flag -->
-        <param name="dbtrack_para_train"        value="true"/>
-        <param name="dbtrack_para_train_direct" value="true"/>
+        <param name="dbtrack_para_train"        value="false"/>
         
         <!-- Cluster Score -->
-        <param name="write_out_score_file"  value="true"/>
+        <param name="write_out_score_file"  value="false"/>
         <param name="use_score_cluster"     value="true"/>
+        <param name="score_function"        value="false"/>
         <param name="output_score_info"     value="false"/>
         <param name="output_score_mat_info" value="false"/>
 
